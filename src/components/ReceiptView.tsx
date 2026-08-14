@@ -6,10 +6,11 @@
 import React from 'react';
 import { jsPDF } from 'jspdf';
 import JsBarcode from 'jsbarcode';
-import { Share2, FileDown, MessageCircle, RefreshCw, X, Check } from 'lucide-react';
+import { Share2, FileDown, MessageCircle, RefreshCw, X, Check, FolderCheck } from 'lucide-react';
 import { Sale, Settings } from '../types';
 import { formatCurrency, copyToClipboard, formatDate } from '../utils';
 import { useDialog } from '../context/DialogContext';
+import { savePdfToAppFolder, isNativeCapacitor } from '../services/nativeStorage';
 
 const getBarcodeDataURL = (text: string): string => {
   const canvas = document.createElement('canvas');
@@ -299,6 +300,30 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
 
   const [showShareModal, setShowShareModal] = React.useState(false);
   const [isSharing, setIsSharing] = React.useState(false);
+  const [autoSavedNotice, setAutoSavedNotice] = React.useState<string | null>(null);
+
+  // Auto-save bill/invoice PDF to dedicated device folder on native Capacitor
+  React.useEffect(() => {
+    let isMounted = true;
+    const autoSaveInvoice = async () => {
+      if (!isNativeCapacitor()) return;
+      try {
+        const doc = await generateA4PDFDoc();
+        const base64 = doc.output('datauristring');
+        const filename = `Invoice_${sale.billNo}_A4.pdf`;
+        const res = await savePdfToAppFolder(base64, filename, 'Invoices');
+        if (res.success && isMounted) {
+          setAutoSavedNotice(`Saved to: ${res.path}`);
+        }
+      } catch (err) {
+        console.warn('Auto-save invoice to native filesystem failed:', err);
+      }
+    };
+    autoSaveInvoice();
+    return () => {
+      isMounted = false;
+    };
+  }, [sale.billNo]);
 
   const generateThermalPDFDoc = async (is58mm: boolean): Promise<jsPDF> => {
     // Calculate page height dynamically to prevent cut-off or excessive trailing white spacing
@@ -752,7 +777,18 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
   const handleDownloadPDF = async () => {
     try {
       const doc = await generateThermalPDFDoc(false);
-      doc.save(`Bill_${sale.billNo}_Thermal.pdf`);
+      const filename = `Bill_${sale.billNo}_Thermal.pdf`;
+      if (isNativeCapacitor()) {
+        const base64 = doc.output('datauristring');
+        const res = await savePdfToAppFolder(base64, filename, 'Invoices');
+        if (res.success) {
+          showAlert(`Receipt PDF saved directly to:\n${res.path}`, 'PDF Saved to Device');
+        } else {
+          showAlert(`Could not save PDF: ${res.error}`, 'Save Error');
+        }
+      } else {
+        doc.save(filename);
+      }
     } catch (e: any) {
       showAlert(`Thermal PDF Error: ${e.message}`, 'PDF Error');
     }
@@ -761,7 +797,18 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
   const handleDownload58mmPDF = async () => {
     try {
       const doc = await generateThermalPDFDoc(true);
-      doc.save(`Bill_${sale.billNo}_Thermal_58mm.pdf`);
+      const filename = `Bill_${sale.billNo}_Thermal_58mm.pdf`;
+      if (isNativeCapacitor()) {
+        const base64 = doc.output('datauristring');
+        const res = await savePdfToAppFolder(base64, filename, 'Invoices');
+        if (res.success) {
+          showAlert(`58mm Receipt PDF saved directly to:\n${res.path}`, 'PDF Saved to Device');
+        } else {
+          showAlert(`Could not save PDF: ${res.error}`, 'Save Error');
+        }
+      } else {
+        doc.save(filename);
+      }
     } catch (e: any) {
       showAlert(`Thermal 58mm PDF Error: ${e.message}`, 'PDF Error');
     }
@@ -770,7 +817,18 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
   const handleDownloadA4PDF = async () => {
     try {
       const doc = await generateA4PDFDoc();
-      doc.save(`Invoice_${sale.billNo}_A4.pdf`);
+      const filename = `Invoice_${sale.billNo}_A4.pdf`;
+      if (isNativeCapacitor()) {
+        const base64 = doc.output('datauristring');
+        const res = await savePdfToAppFolder(base64, filename, 'Invoices');
+        if (res.success) {
+          showAlert(`A4 Tax Invoice PDF saved directly to:\n${res.path}`, 'Invoice Saved to Device');
+        } else {
+          showAlert(`Could not save PDF: ${res.error}`, 'Save Error');
+        }
+      } else {
+        doc.save(filename);
+      }
     } catch (e: any) {
       showAlert(`A4 PDF Generation Error: ${e.message}`, 'PDF Error');
     }
@@ -781,6 +839,13 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
     try {
       const doc = pdfFormat === 'A4' ? await generateA4PDFDoc() : await generateThermalPDFDoc(false);
       const filename = `Invoice_${sale.billNo}_${pdfFormat}.pdf`;
+      
+      // On native Capacitor, always ensure the file is saved to the app folder first
+      if (isNativeCapacitor()) {
+        const base64 = doc.output('datauristring');
+        await savePdfToAppFolder(base64, filename, 'Invoices');
+      }
+
       const pdfBlob = doc.output('blob');
       const file = new File([pdfBlob], filename, { type: 'application/pdf' });
 
@@ -793,17 +858,25 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
         setIsSharing(false);
       } else {
         // Safe download fallback + trigger helper modal instructions
-        doc.save(filename);
+        if (!isNativeCapacitor()) {
+          doc.save(filename);
+        }
         setIsSharing(false);
         setShowShareModal(true);
       }
     } catch (err: any) {
       console.warn('PDF Web Share API failed or cancelled:', err);
       setIsSharing(false);
-      // Try safe download as fallback
+      // Try safe save as fallback
       try {
         const doc = pdfFormat === 'A4' ? await generateA4PDFDoc() : await generateThermalPDFDoc(false);
-        doc.save(`Invoice_${sale.billNo}_${pdfFormat}.pdf`);
+        const filename = `Invoice_${sale.billNo}_${pdfFormat}.pdf`;
+        if (isNativeCapacitor()) {
+          const base64 = doc.output('datauristring');
+          await savePdfToAppFolder(base64, filename, 'Invoices');
+        } else {
+          doc.save(filename);
+        }
         setShowShareModal(true);
       } catch (e) {
         showAlert(`Sharing failed: ${err.message || err}`, 'Share Error');
@@ -847,6 +920,13 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
           </button>
         </div>
       </div>
+
+      {autoSavedNotice && (
+        <div className="mb-3 p-2 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 rounded-xl flex items-center gap-2 text-emerald-800 dark:text-emerald-300 text-xs font-semibold">
+          <FolderCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span className="truncate">{autoSavedNotice}</span>
+        </div>
+      )}
 
       <pre className="font-mono text-[11px] leading-relaxed bg-slate-50 text-slate-800 rounded-xl p-3 border border-slate-100 dark:bg-slate-950 dark:text-slate-300 dark:border-slate-850 overflow-x-auto max-h-[200px] overflow-y-auto whitespace-pre-wrap select-all transition-colors">
         {receiptText}

@@ -494,11 +494,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div className="space-y-6">
                 {/* Active Shop Node Brand & Header */}
                 <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5 text-center sm:text-left pb-6 border-b border-slate-150 dark:border-slate-800/60">
-                  <div className="relative w-20 h-20 bg-slate-100 dark:bg-slate-800/60 rounded-2xl flex items-center justify-center overflow-hidden border border-slate-200 dark:border-slate-700 shrink-0 shadow-xs">
+                  <div className="relative w-20 h-20 bg-slate-900 rounded-2xl flex items-center justify-center overflow-hidden border border-slate-200 dark:border-slate-700 shrink-0 shadow-xs">
                     {logo ? (
                       <img src={logo} alt="Store Logo" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     ) : (
-                      <Building className="w-8 h-8 text-indigo-500" />
+                      <img src="/app-icon.svg" alt="ShopPOS Pro Icon" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     )}
                   </div>
                   

@@ -7,6 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Save, Trash, Scan, Sparkles, Image, Tag, MapPin, Percent, DollarSign, Layers } from 'lucide-react';
 import { Product, Supplier } from '../types';
 import { useDialog } from '../context/DialogContext';
+import { saveProductImageToAppFolder } from '../services/nativeStorage';
 
 interface ProductFormModalProps {
   product: Product | null;
@@ -168,8 +169,12 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (uploadEvent) => {
-      setImage(uploadEvent.target?.result as string);
+    reader.onload = async (uploadEvent) => {
+      const rawBase64 = uploadEvent.target?.result as string;
+      if (!rawBase64) return;
+      
+      const saveRes = await saveProductImageToAppFolder(rawBase64, name || barcode || 'product');
+      setImage(saveRes.imageUri);
     };
     reader.readAsDataURL(file);
   };

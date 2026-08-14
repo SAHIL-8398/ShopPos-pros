@@ -44,6 +44,7 @@ import {
 } from './db';
 import { generateId, getTodayDateString, formatCurrency, playBeepSound, computePredictiveAlerts, translate, formatDate, formatHeaderDate } from './utils';
 import { LocalizationProvider } from './context/LocalizationContext';
+import { initAppStorage } from './services/nativeStorage';
 
 // Extracted Sub-Views
 import { DashboardView } from './components/DashboardView';
@@ -66,6 +67,7 @@ import { ExpensesModal } from './components/ExpensesModal';
 import { CustomerFormModal } from './components/CustomerFormModal';
 import { CalculatorModal } from './components/CalculatorModal';
 import { DayChangeLogoutBanner } from './components/DayChangeLogoutBanner';
+import { AppLogo } from './components/AppLogo';
 
 interface AppHistoryState {
   idx: number;
@@ -656,6 +658,9 @@ export default function App() {
         }
         
         setDb(localData);
+
+        // Initialize dedicated native storage directory hierarchy on device
+        initAppStorage().catch(err => console.warn('Native storage setup notice:', err));
 
         const stats = await estimateStorage();
         setStorageStats(stats);
@@ -2364,7 +2369,7 @@ export default function App() {
             <div className="p-6 border-b border-slate-900/75 flex flex-col gap-2">
               <div className="flex items-center gap-2">
                 <span className="text-lg font-extrabold text-indigo-400 tracking-tight flex items-center gap-2.5">
-                  <span className="w-8 h-8 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 flex items-center justify-center font-bold text-sm select-none shadow-inner">⚡</span>
+                  <AppLogo size="sm" rounded="rounded-xl" />
                   <span className="truncate max-w-[155px] font-black">{db.settings.shopName || 'ShopPOS'}</span>
                 </span>
               </div>
@@ -2516,8 +2521,9 @@ export default function App() {
               )}
               <div className="flex flex-col min-w-0">
                 <div className="flex items-center gap-1.5">
+                  <AppLogo size="xs" rounded="rounded-md" />
                   <span className="text-[11px] font-black uppercase tracking-wider text-indigo-400 truncate">
-                    ⚡ {db.settings.shopName || 'ShopPOS'}
+                    {db.settings.shopName || 'ShopPOS'}
                   </span>
                 {db.staff.find(s => s.id === activeStaffId) ? (
                   <button
@@ -3753,7 +3759,7 @@ function FirstLoginSetupForm({ onSave }: FirstLoginSetupProps) {
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-950 flex flex-col justify-center p-4">
       <div className="bg-slate-900/80 backdrop-blur-md border border-slate-800 rounded-3xl p-6 shadow-2xl max-w-sm w-full mx-auto text-white">
         <div className="text-center mb-4 select-none">
-          <span className="text-5xl block animate-bounce mb-2">🏪</span>
+          <AppLogo size="xl" rounded="rounded-2xl" className="mx-auto mb-3" />
           <h2 className="text-2xl font-black tracking-tight text-white leading-none">Configure ShopPOS Pro</h2>
           <p className="text-xs text-indigo-400 font-bold mt-1.5 uppercase tracking-wide">First-time register setup</p>
         </div>
@@ -3868,6 +3874,7 @@ function LoginScreen({
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-7 shadow-2xl max-w-sm w-full mx-auto text-white">
         
         <div className="text-center select-none mb-6">
+          <AppLogo size="lg" rounded="rounded-2xl" className="mx-auto mb-3" />
           <h2 className="text-xl font-bold text-slate-100 tracking-tight leading-none">ShopPOS</h2>
           <p className="text-[10px] text-slate-400 font-semibold mt-1 tracking-wider uppercase">Billing Station Login</p>
         </div>

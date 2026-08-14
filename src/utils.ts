@@ -5,6 +5,7 @@
 
 import { jsPDF } from 'jspdf';
 import { languagePacks } from './context/LocalizationContext';
+import { savePdfToAppFolder, isNativeCapacitor } from './services/nativeStorage';
 
 // Format numbers with 2 decimal places unless they are integers
 export function formatCurrency(n: number): string {
@@ -375,7 +376,13 @@ export function generateQuotationPDF(
   doc.line(135, y + 18, 190, y + 18);
   doc.text('Authorized Store Signature', 142, y + 23);
   
-  doc.save(`Quotation_${customer.name.replace(/\s+/g, '_') || 'Customer'}.pdf`);
+  const filename = `Quotation_${customer.name.replace(/\s+/g, '_') || 'Customer'}.pdf`;
+  if (isNativeCapacitor()) {
+    const base64 = doc.output('datauristring');
+    savePdfToAppFolder(base64, filename, 'Quotations');
+  } else {
+    doc.save(filename);
+  }
 }
 
 export function generateDeliveryChallanPDF(
@@ -509,6 +516,12 @@ export function generateDeliveryChallanPDF(
   doc.line(135, y + 38, 190, y + 38);
   doc.text('Authorized Dispatch Clerk', 142, y + 43);
   
-  doc.save(`Challan_${customer.name.replace(/\s+/g, '_') || 'Customer'}.pdf`);
+  const filename = `Challan_${customer.name.replace(/\s+/g, '_') || 'Customer'}.pdf`;
+  if (isNativeCapacitor()) {
+    const base64 = doc.output('datauristring');
+    savePdfToAppFolder(base64, filename, 'Challans');
+  } else {
+    doc.save(filename);
+  }
 }
 
