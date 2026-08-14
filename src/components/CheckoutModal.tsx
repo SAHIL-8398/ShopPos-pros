@@ -4,9 +4,10 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { X, CheckCircle, Percent, QrCode, CreditCard, Landmark, DollarSign, Search, UserMinus, Award } from 'lucide-react';
+import { X, CheckCircle, Percent, QrCode, CreditCard, Landmark, DollarSign, Search, UserMinus, Award, RefreshCw } from 'lucide-react';
 import { Customer, Staff, SaleItem, Settings, Sale } from '../types';
 import { formatCurrency, generateId } from '../utils';
+import { useDialog } from '../context/DialogContext';
 
 interface CheckoutModalProps {
   cart: SaleItem[];
@@ -27,7 +28,8 @@ interface CheckoutModalProps {
     staffName: string;
     pointsRedeemed?: number;
     newCustomer?: { name: string; phone: string; email?: string; address?: string };
-  }) => void;
+    interStateGst?: boolean;
+  }) => Promise<void> | void;
   onShowUPIQR: (amt: number) => void;
   sales?: Sale[];
   activeStaffId?: string | null;
@@ -44,8 +46,11 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   onShowUPIQR,
   sales = [],
   activeStaffId = null,
-  showAlert,
+  showAlert: propShowAlert,
 }) => {
+  const dialog = useDialog();
+  const showAlert = propShowAlert || dialog.showAlert;
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [discountValue, setDiscountValue] = useState<string>('');
   const [discountType, setDiscountType] = useState<'flat' | 'pct'>('flat');
   const [gstPctVal, setGstPctVal] = useState<string>('');
@@ -97,7 +102,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     } else if (code === 'FREESHIP') {
       promo = { code: 'FREESHIP', type: 'flat' as const, val: 50, desc: 'Rs. 50 Discount Waived' };
     } else {
-      alert('Invalid or Expired promo coupon code!');
+      showAlert('Invalid or Expired promo coupon code!', 'Invalid Coupon');
       return;
     }
     
@@ -188,32 +193,22 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   }, [upiSimStatus, upiSimCountdown]);
 
   const handleCompleteSale = async () => {
+    if (isProcessing) return;
+
     if (paymentMethod === 'credit') {
       if (customerType === 'existing') {
         if (!selectedCustomerId) {
-          if (showAlert) {
-            await showAlert('Select a verified customer to log credit outstanding balance!', 'Verification Required');
-          } else {
-            alert('Select a verified customer to log credit outstanding balance!');
-          }
+          await showAlert('Select a verified customer to log credit outstanding balance!', 'Verification Required');
           return;
         }
       } else {
         // new customer
         if (!newCustName.trim()) {
-          if (showAlert) {
-            await showAlert('Please specify the new customer\'s Name!', 'Information Required');
-          } else {
-            alert('Please specify the new customer\'s Name!');
-          }
+          await showAlert('Please specify the new customer\'s Name!', 'Information Required');
           return;
         }
         if (!newCustPhone.trim()) {
-          if (showAlert) {
-            await showAlert('Please specify the new customer\'s Phone Number!', 'Information Required');
-          } else {
-            alert('Please specify the new customer\'s Phone Number!');
-          }
+          await showAlert('Please specify the new customer\'s Phone Number!', 'Information Required');
           return;
         }
       }
@@ -221,20 +216,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
     if (settings.requireStaffPin) {
       if (!staffId) {
-        if (showAlert) {
-          await showAlert('Choose the active staff member serving the client!', 'Staff Required');
-        } else {
-          alert('Choose the active staff member serving the client!');
-        }
+        await showAlert('Choose the active staff member serving the client!', 'Staff Required');
         return;
       }
       const assigned = staff.find(s => s.id === staffId);
       if (assigned && assigned.pin && assigned.pin !== staffPin) {
-        if (showAlert) {
-          await showAlert('❌ Invalid 4-digit Staff PIN code entered!', 'PIN Verification Failed');
-        } else {
-          alert('Invalid 4-digit Staff PIN code entered!');
-        }
+        await showAlert('Invalid 4-digit Staff PIN code entered!', 'PIN Verification Failed');
         return;
       }
     }
@@ -245,30 +232,36 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     const totalCost = cart.reduce((sum, i) => sum + (i.buyPrice || 0) * i.qty, 0);
     const calculatedProfit = afterDiscount - totalCost - numPointsDeduction;
 
-    onComplete({
-      discount: computedDiscount + numPointsDeduction,
-      gstPct: numGstPct,
-      gst: computedGst,
-      total: checkoutTotal,
-      profit: calculatedProfit,
-      paymentMethod,
-      splitDetails: paymentMethod === 'split' ? { 
-        cashAmount: numSplitCash, 
-        cardAmount: numSplitCard, 
-        upiAmount: computedSplitUpi 
-      } : undefined,
-      creditCustId: customerType === 'existing' ? selectedCustomerId : null,
-      staffId,
-      staffName: assignedStaff ? assignedStaff.name : '',
-      pointsRedeemed: numPointsDeduction,
-      interStateGst,
-      newCustomer: customerType === 'new' ? {
-        name: newCustName.trim(),
-        phone: newCustPhone.trim(),
-        email: newCustEmail.trim(),
-        address: newCustAddress.trim(),
-      } : undefined
-    });
+    setIsProcessing(true);
+    try {
+      await onComplete({
+        discount: computedDiscount + numPointsDeduction,
+        gstPct: numGstPct,
+        gst: computedGst,
+        total: checkoutTotal,
+        profit: calculatedProfit,
+        paymentMethod,
+        splitDetails: paymentMethod === 'split' ? { 
+          cashAmount: numSplitCash, 
+          cardAmount: numSplitCard, 
+          upiAmount: computedSplitUpi 
+        } : undefined,
+        creditCustId: customerType === 'existing' ? selectedCustomerId : null,
+        staffId,
+        staffName: assignedStaff ? assignedStaff.name : '',
+        pointsRedeemed: numPointsDeduction,
+        interStateGst,
+        newCustomer: customerType === 'new' ? {
+          name: newCustName.trim(),
+          phone: newCustPhone.trim(),
+          email: newCustEmail.trim(),
+          address: newCustAddress.trim(),
+        } : undefined
+      });
+    } catch (err) {
+      console.error('Checkout error:', err);
+      setIsProcessing(false);
+    }
   };
 
   const filteredCreditorSrch = credSearch.toLowerCase().trim()
@@ -802,10 +795,24 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             {/* Complete submit */}
             <button
               onClick={handleCompleteSale}
-              className="w-full flex items-center justify-center gap-2 py-3 bg-indigo-600 hover:bg-indigo-755 text-white font-extrabold text-sm rounded-xl active:scale-[0.98] transition-transform shadow-md mt-1 cursor-pointer"
+              disabled={isProcessing}
+              className={`w-full flex items-center justify-center gap-2 py-3 font-extrabold text-sm rounded-xl transition-all shadow-md mt-1 ${
+                isProcessing
+                  ? 'bg-indigo-400 dark:bg-indigo-500/50 text-white cursor-not-allowed opacity-75'
+                  : 'bg-indigo-600 hover:bg-indigo-700 text-white active:scale-[0.98] cursor-pointer'
+              }`}
             >
-              <CheckCircle className="w-4 h-4 fill-white" />
-              Complete Sale and Print Invoice
+              {isProcessing ? (
+                <>
+                  <RefreshCw className="w-4 h-4 text-white animate-spin" />
+                  <span>Processing Sale & Generating Invoice...</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle className="w-4 h-4 fill-white" />
+                  <span>Complete Sale and Print Invoice</span>
+                </>
+              )}
             </button>
           </div>
         </div>

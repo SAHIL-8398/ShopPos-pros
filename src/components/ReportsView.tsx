@@ -8,6 +8,7 @@ import { BarChart3, Download, TrendingUp, TrendingDown, DollarSign, Calendar, Re
 import { AppDatabase, Sale, Expense } from '../types';
 import { formatCurrency, getTodayDateString, formatDate } from '../utils';
 import { useTranslation } from '../context/LocalizationContext';
+import { useDialog } from '../context/DialogContext';
 import {
   ResponsiveContainer,
   LineChart,
@@ -35,6 +36,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   onOpenReturnModal,
 }) => {
   const { t } = useTranslation();
+  const { showAlert } = useDialog();
   const [period, setPeriod] = useState<'today' | 'week' | 'month' | 'year' | 'all' | 'daily'>('today');
 
   const handleExportGSTR = (reportType: 'GSTR-1' | 'GSTR-2' | 'GSTR-3B') => {
@@ -312,12 +314,12 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 const el = document.getElementById('return-bill-search-input') as HTMLInputElement;
                 const billNoInput = el?.value?.trim();
                 if (!billNoInput) {
-                  alert('⚠️ Enter a valid Bill Number first!');
+                  showAlert('Please enter a valid Bill Number first!', 'Bill Number Required');
                   return;
                 }
                 const matchedSale = db.sales.find(s => String(s.billNo).toLowerCase() === billNoInput.toLowerCase() && !s.voided);
                 if (!matchedSale) {
-                  alert(`❌ Active/Un-voided bill with number #${billNoInput} not found in sales history.`);
+                  showAlert(`Active/Un-voided bill with number #${billNoInput} not found in sales history.`, 'Bill Not Found');
                   return;
                 }
                 onOpenReturnModal(matchedSale.id);

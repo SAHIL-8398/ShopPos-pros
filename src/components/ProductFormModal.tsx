@@ -6,6 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Save, Trash, Scan, Sparkles, Image, Tag, MapPin, Percent, DollarSign, Layers } from 'lucide-react';
 import { Product, Supplier } from '../types';
+import { useDialog } from '../context/DialogContext';
 
 interface ProductFormModalProps {
   product: Product | null;
@@ -37,6 +38,8 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
   defaultSettings,
   products = [],
 }) => {
+  const { showAlert } = useDialog();
+
   // Core properties
   const [name, setName] = useState<string>('');
   const [barcode, setBarcode] = useState<string>('');
@@ -171,15 +174,50 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
     reader.readAsDataURL(file);
   };
 
+  const duplicateProduct = barcode.trim()
+    ? products.find(p => p.barcode && p.barcode.trim().toLowerCase() === barcode.trim().toLowerCase() && p.id !== product?.id)
+    : null;
+
+  const handleGenerateBarcode = () => {
+    let gen = '';
+    let attempts = 0;
+    do {
+      const random5Digits = Math.floor(10000 + Math.random() * 90000).toString();
+      gen = '45' + random5Digits;
+      attempts++;
+    } while (products.some(p => p.barcode?.trim() === gen) && attempts < 100);
+    setBarcode(gen);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return alert('Product Name is required!');
-    if (!mrp) return alert('MRP is required!');
-    if (!expiryDate) return alert('Expiry Date is required for shelf auditing!');
+    if (!name.trim()) {
+      showAlert('Product Name is required!', 'Required Field');
+      return;
+    }
+    if (!mrp) {
+      showAlert('MRP is required!', 'Required Field');
+      return;
+    }
+    if (!expiryDate) {
+      showAlert('Expiry Date is required for shelf auditing!', 'Required Field');
+      return;
+    }
+
+    const trimmedBarcode = barcode.trim();
+    if (trimmedBarcode) {
+      const duplicate = products.find(
+        p => p.barcode && p.barcode.trim().toLowerCase() === trimmedBarcode.toLowerCase() && p.id !== product?.id
+      );
+      if (duplicate) {
+        showAlert(`⚠️ Duplicate Barcode: Barcode "${trimmedBarcode}" is already assigned to "${duplicate.name}". Barcodes must be unique to prevent scanning conflicts.`, 'Duplicate Barcode');
+        return;
+      }
+    }
 
     onSave({
       name: name.trim(),
-      barcode: barcode.trim(),
+      barcode: trimmedBarcode,
       category,
       subcategory: subcategory.trim(),
       brand: brand.trim(),
@@ -212,7 +250,10 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 
   const handleAdjustQty = () => {
     const adjNum = Number(adjustQty);
-    if (!adjustQty || isNaN(adjNum)) return alert('Enter a valid adjusted number, e.g. +10 or -5');
+    if (!adjustQty || isNaN(adjNum)) {
+      showAlert('Enter a valid adjusted number, e.g. +10 or -5', 'Invalid Number');
+      return;
+    }
     const newQty = Math.max(0, qty + adjNum);
     setQty(newQty);
     setAdjustQty('');
@@ -305,12 +346,9 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                   <>
                     <button
                       type="button"
-                      onClick={() => {
-                        const random5Digits = Math.floor(10000 + Math.random() * 90000).toString();
-                        setBarcode('45' + random5Digits);
-                      }}
+                      onClick={handleGenerateBarcode}
                       className="px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl flex items-center justify-center cursor-pointer font-extrabold active:scale-95 transition-all text-[10px] gap-1 shrink-0"
-                      title="Auto-Generate 7-digit Barcode starting with 45"
+                      title="Auto-Generate unique 7-digit Barcode starting with 45"
                     >
                       <Sparkles className="w-3 h-3" />
                       <span>Gen</span>
@@ -326,6 +364,11 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                   </>
                 )}
               </div>
+              {duplicateProduct && (
+                <p className="text-[11px] text-rose-500 dark:text-rose-400 font-bold mt-1.5 flex items-center gap-1">
+                  ⚠️ Duplicate Barcode: Already assigned to &ldquo;{duplicateProduct.name}&rdquo;
+                </p>
+              )}
             </div>
 
             {/* Product Name */}
@@ -737,7 +780,10 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                   onClick={() => {
                     if (!recipeProductId) return;
                     const exists = bomItems.some(item => item.productId === recipeProductId);
-                    if (exists) return alert('Ingredient already added to Bill of Materials!');
+                    if (exists) {
+                      showAlert('Ingredient already added to Bill of Materials!', 'Duplicate Item');
+                      return;
+                    }
                     setBomItems([...bomItems, { productId: recipeProductId, qtyNeeded: recipeQty }]);
                     setRecipeProductId('');
                     setRecipeQty(1);

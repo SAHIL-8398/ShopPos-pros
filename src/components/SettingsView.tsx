@@ -35,17 +35,20 @@ import {
   X,
   Sun,
   Moon,
+  Clock,
   Edit3
 } from 'lucide-react';
 import { AppDatabase, Settings as SettingsType } from '../types';
 import { formatCurrency } from '../utils';
 import { useTranslation } from '../context/LocalizationContext';
+import { useDialog } from '../context/DialogContext';
 
 interface SettingsViewProps {
   db: AppDatabase;
   onSaveShopInfo: (info: Partial<SettingsType>) => void;
   onChangeCredentials: (nid: string, cpw: string, npw: string) => void;
   onRegisterBiometric: () => void;
+  onRemoveBiometric?: () => void;
   onOpenSuppliers: () => void;
   onOpenStaff: () => void;
   onOpenLabels: () => void;
@@ -57,6 +60,7 @@ interface SettingsViewProps {
   lastBackupTime: string | null;
   isDarkMode: boolean;
   onToggleDarkMode: (dark: boolean) => void;
+  onTestDayChangeWarning?: () => void;
 }
 
 type SettingsSection = 'profile' | 'shops' | 'modules' | 'security' | 'database';
@@ -66,6 +70,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onSaveShopInfo,
   onChangeCredentials,
   onRegisterBiometric,
+  onRemoveBiometric,
   onOpenSuppliers,
   onOpenStaff,
   onOpenLabels,
@@ -77,8 +82,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   lastBackupTime,
   isDarkMode,
   onToggleDarkMode,
+  onTestDayChangeWarning,
 }) => {
   const { t } = useTranslation();
+  const { showAlert, showConfirm } = useDialog();
   const currentSettings = db.settings;
   const currentAuth = db.auth;
 
@@ -107,6 +114,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [lowStockDefault, setLowStockDefault] = useState<number>(currentSettings.lowStockDefault || 10);
   const [nearExpiryDefault, setNearExpiryDefault] = useState<number>(currentSettings.nearExpiryDefault || 30);
   const [autoLockSession, setAutoLockSession] = useState<boolean>(!!currentSettings.autoLockSession);
+  const [autoLogoutOnDayChange, setAutoLogoutOnDayChange] = useState<boolean>(currentSettings.autoLogoutOnDayChange !== false);
+  const [dayChangeWarningMinutes, setDayChangeWarningMinutes] = useState<number>(currentSettings.dayChangeWarningMinutes || 5);
 
   // Bill Format Options states
   const [showShopNameOnBill, setShowShopNameOnBill] = useState<boolean>(currentSettings.showShopNameOnBill !== false);
@@ -136,8 +145,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [activeProfileId, setActiveProfileId] = useState<string>('default');
   const [newProfileName, setNewProfileName] = useState<string>('');
 
+  const isWebAuthnSupported = typeof window !== 'undefined' && !!window.PublicKeyCredential && typeof navigator !== 'undefined' && !!navigator.credentials;
+
   useEffect(() => {
-    setBiometricStatus(currentAuth.fpId ? 'Registered device biometric print' : 'No biometric keys found');
+    if (currentAuth.fpId) {
+      if (currentAuth.fpId === 'simulated_biometric') {
+        setBiometricStatus('⚠️ Virtual Touch Bypass Active (Non-Secure / Demo Only)');
+      } else {
+        setBiometricStatus('🔒 Hardware Biometric Linked (WebAuthn Platform Key)');
+      }
+    } else {
+      setBiometricStatus('No Biometric Keys Configured');
+    }
   }, [currentAuth.fpId]);
 
   useEffect(() => {
@@ -157,6 +176,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setLowStockDefault(currentSettings.lowStockDefault || 10);
     setNearExpiryDefault(currentSettings.nearExpiryDefault || 30);
     setAutoLockSession(!!currentSettings.autoLockSession);
+    setAutoLogoutOnDayChange(currentSettings.autoLogoutOnDayChange !== false);
+    setDayChangeWarningMinutes(currentSettings.dayChangeWarningMinutes || 5);
 
     setShowShopNameOnBill(currentSettings.showShopNameOnBill !== false);
     setShowAddressOnBill(currentSettings.showAddressOnBill !== false);
@@ -206,6 +227,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       lowStockDefault,
       nearExpiryDefault,
       autoLockSession,
+      autoLogoutOnDayChange,
+      dayChangeWarningMinutes,
       logo,
       currency,
       language,
@@ -255,6 +278,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setLowStockDefault(currentSettings.lowStockDefault || 10);
     setNearExpiryDefault(currentSettings.nearExpiryDefault || 30);
     setAutoLockSession(!!currentSettings.autoLockSession);
+    setAutoLogoutOnDayChange(currentSettings.autoLogoutOnDayChange !== false);
+    setDayChangeWarningMinutes(currentSettings.dayChangeWarningMinutes || 5);
     setIsEditingStore(false);
   };
 
@@ -298,13 +323,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     window.location.reload();
   };
 
-  const handleDeleteProfile = (pId: string) => {
-    if (pId === 'default') return alert('Cannot delete the default business profile!');
-    if (pId === activeProfileId) {
-      alert('Cannot delete the active business profile! Switch to another profile first.');
+  const handleDeleteProfile = async (pId: string) => {
+    if (pId === 'default') {
+      await showAlert('Cannot delete the default business profile!', 'Operation Restricted');
       return;
     }
-    if (window.confirm(`Are you sure you want to permanently delete this business profile? All inventory and records under this shop will be permanently wiped.`)) {
+    if (pId === activeProfileId) {
+      await showAlert('Cannot delete the active business profile! Switch to another profile first.', 'Active Profile');
+      return;
+    }
+    const confirmed = await showConfirm(
+      'Are you sure you want to permanently delete this business profile? All inventory and records under this shop will be permanently wiped.',
+      'Delete Business Profile'
+    );
+    if (confirmed) {
       const updated = businessProfiles.filter(p => p.id !== pId);
       setBusinessProfiles(updated);
       localStorage.setItem('shoppos_profiles', JSON.stringify(updated));
@@ -431,14 +463,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 Active Store Parameters & Settings
               </h3>
               {!isEditingStore && (
-                <button
-                  type="button"
-                  onClick={() => setIsEditingStore(true)}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black uppercase tracking-wider rounded-xl flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer shadow-xs"
-                >
-                  <Edit3 className="w-3.5 h-3.5" />
-                  Edit Settings
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsBillFormatModalOpen(true)}
+                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-300 text-xs font-bold rounded-xl border border-slate-200/80 dark:border-slate-700/60 transition-all cursor-pointer"
+                  >
+                    Receipt Format
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingStore(true)}
+                    className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold uppercase tracking-wider rounded-xl flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer shadow-xs"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                    Edit Details
+                  </button>
+                </div>
               )}
             </div>
 
@@ -451,123 +492,89 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
             {!isEditingStore ? (
               <div className="space-y-6">
-                {/* Header / Brand block */}
-                <div className="flex flex-col items-center justify-center text-center gap-4 bg-slate-50 dark:bg-slate-950/40 p-6 rounded-2xl border border-slate-150 dark:border-slate-850/60 relative">
-                  <div className="relative w-16 h-16 bg-white dark:bg-slate-900 rounded-2xl flex items-center justify-center overflow-hidden border border-slate-200 dark:border-slate-800 shrink-0 shadow-xs">
+                {/* Active Shop Node Brand & Header */}
+                <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5 text-center sm:text-left pb-6 border-b border-slate-150 dark:border-slate-800/60">
+                  <div className="relative w-20 h-20 bg-slate-100 dark:bg-slate-800/60 rounded-2xl flex items-center justify-center overflow-hidden border border-slate-200 dark:border-slate-700 shrink-0 shadow-xs">
                     {logo ? (
                       <img src={logo} alt="Store Logo" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     ) : (
-                      <Building className="w-6 h-6 text-indigo-500" />
+                      <Building className="w-8 h-8 text-indigo-500" />
                     )}
                   </div>
-                  <div className="flex-1 min-w-0 flex flex-col items-center text-center">
-                    <span className="text-[10px] font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest block mb-1">Active Shop Node</span>
-                    <h4 className="text-xl font-black text-slate-800 dark:text-slate-100 leading-tight">
+                  
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 mb-1.5">
+                      <span className="text-[10px] font-black text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800/60 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                        Active Shop Node
+                      </span>
+                      <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2.5 py-0.5 rounded-full">
+                        FY: {financialYear}
+                      </span>
+                    </div>
+                    
+                    <h4 className="text-2xl font-black text-slate-900 dark:text-slate-100 leading-tight">
                       {shopName || 'Unnamed Shop'}
                     </h4>
+                    
                     {phone && (
-                      <p className="text-sm font-extrabold text-slate-700 dark:text-slate-300 mt-1">
-                        {phone}
+                      <p className="text-xs font-bold text-slate-700 dark:text-slate-300 mt-1">
+                        📞 {phone}
                       </p>
                     )}
+                    
                     {address && (
-                      <p className="text-xs text-slate-450 dark:text-slate-500 font-medium mt-1 max-w-md">
-                        {address}
-                      </p>
-                    )}
-                    {gstin && (
-                      <p className="text-[11px] font-mono font-black text-indigo-600 dark:text-indigo-400 mt-1 uppercase tracking-wider">
-                        GSTIN: {gstin}
-                      </p>
-                    )}
-                    {fssai && (
-                      <p className="text-[11px] font-mono font-black text-emerald-600 dark:text-emerald-400 mt-0.5 uppercase tracking-wider">
-                        FSSAI LIC. NO: {fssai}
-                      </p>
-                    )}
-                    {upi && (
-                      <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400 mt-1 select-all" title="UPI Payment Address">
-                        {upi}
+                      <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5 leading-relaxed max-w-2xl">
+                        📍 {address}
                       </p>
                     )}
                   </div>
                 </div>
 
-                {/* Read-only details grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="bg-slate-50 dark:bg-slate-950/30 p-4 rounded-xl border border-slate-150/80 dark:border-slate-850/60 space-y-1">
-                    <span className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block">Trade Name</span>
-                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200">{shopName || '—'}</span>
+                {/* Flat, Key-Value Information Grid without nested box tabs */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-5 text-xs">
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-wider block">GSTIN / Tax ID</span>
+                    <span className="font-mono font-bold text-slate-800 dark:text-slate-200 text-sm">{gstin || 'Not Configured'}</span>
                   </div>
 
-                  <div className="bg-slate-50 dark:bg-slate-950/30 p-4 rounded-xl border border-slate-150/80 dark:border-slate-850/60 space-y-1">
-                    <span className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block">Contact Number</span>
-                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200">{phone || '—'}</span>
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-wider block">FSSAI License</span>
+                    <span className="font-mono font-bold text-slate-800 dark:text-slate-200 text-sm">{fssai || 'Not Configured'}</span>
                   </div>
 
-                  <div className="bg-slate-50 dark:bg-slate-950/30 p-4 rounded-xl border border-slate-150/80 dark:border-slate-850/60 space-y-1 md:col-span-2">
-                    <span className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block">Store Address</span>
-                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200">{address || '—'}</span>
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-wider block">UPI Payee ID (VPA)</span>
+                    <span className="font-mono font-bold text-slate-800 dark:text-slate-200 text-sm select-all">{upi || 'Not Configured'}</span>
                   </div>
 
-                  <div className="bg-slate-50 dark:bg-slate-950/30 p-4 rounded-xl border border-slate-150/80 dark:border-slate-850/60 space-y-1">
-                    <span className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block">GSTIN Number</span>
-                    <span className="text-xs font-mono font-bold text-slate-800 dark:text-slate-200">{gstin || '—'}</span>
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Currency & Language</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-200">{currency} · {language}</span>
                   </div>
 
-                  <div className="bg-slate-50 dark:bg-slate-950/30 p-4 rounded-xl border border-slate-150/80 dark:border-slate-850/60 space-y-1">
-                    <span className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block">FSSAI License Number</span>
-                    <span className="text-xs font-mono font-bold text-slate-800 dark:text-slate-200">{fssai || '—'}</span>
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Tax Calculations</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-200">{gstEnabled ? `GST Active (${defaultGstPct}%)` : 'Tax Disabled'}</span>
                   </div>
 
-                  <div className="bg-slate-50 dark:bg-slate-950/30 p-4 rounded-xl border border-slate-150/80 dark:border-slate-850/60 space-y-1">
-                    <span className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block">UPI Payee ID (VPA)</span>
-                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200">{upi || '—'}</span>
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Inventory Thresholds</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-200">Low: {lowStockDefault} units | Exp: {nearExpiryDefault}d</span>
                   </div>
 
-                  <div className="bg-slate-50 dark:bg-slate-950/30 p-4 rounded-xl border border-slate-150/80 dark:border-slate-850/60 space-y-1 md:col-span-2">
-                    <span className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block">Bill Footer Message</span>
-                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200">"{footer}"</span>
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Auto-Lock Inactivity</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-200">{autoLockSession ? 'Enabled (5m idle)' : 'Disabled'}</span>
                   </div>
 
-                  <div className="bg-slate-50 dark:bg-slate-950/30 p-4 rounded-xl border border-slate-150/80 dark:border-slate-850/60 space-y-1">
-                    <span className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block">Currency & Localization</span>
-                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200">{currency} (Language: {language})</span>
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Day-Change Midnight Logout</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-200">{autoLogoutOnDayChange ? `Enabled (00:00, ${dayChangeWarningMinutes}m warning)` : 'Disabled'}</span>
                   </div>
 
-                  <div className="bg-slate-50 dark:bg-slate-950/30 p-4 rounded-xl border border-slate-150/80 dark:border-slate-850/60 space-y-1">
-                    <span className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block">Current Financial Year</span>
-                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200">{financialYear}</span>
-                  </div>
-
-                  <div className="bg-slate-50 dark:bg-slate-950/30 p-4 rounded-xl border border-slate-150/80 dark:border-slate-850/60 space-y-1">
-                    <span className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block">Inventory Thresholds</span>
-                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                      Low Stock: {lowStockDefault} units | Expiry: {nearExpiryDefault} days prior
-                    </span>
-                  </div>
-
-                  <div className="bg-slate-50 dark:bg-slate-950/30 p-4 rounded-xl border border-slate-150/80 dark:border-slate-850/60 space-y-1">
-                    <span className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block">Auto-Lock Idle Inactivity</span>
-                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                      {autoLockSession ? 'Enabled (Logs out cashier after 5m idle)' : 'Disabled'}
-                    </span>
-                  </div>
-
-                  <div className="bg-slate-50 dark:bg-slate-950/30 p-4 rounded-xl border border-slate-150/80 dark:border-slate-850/60 space-y-1 md:col-span-2 flex flex-col sm:flex-row justify-between items-center gap-3">
-                    <div>
-                      <span className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block">Tax Configuration</span>
-                      <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                        GST Calculations: {gstEnabled ? `Enabled (${defaultGstPct}%)` : 'Disabled'}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setIsBillFormatModalOpen(true)}
-                      className="px-3.5 py-1.5 bg-indigo-50 dark:bg-indigo-950/30 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 text-[10px] font-black uppercase tracking-wider rounded-lg transition-transform active:scale-95 cursor-pointer border border-indigo-200 dark:border-indigo-800/60"
-                    >
-                      Configure Invoice Print Blocks
-                    </button>
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Receipt Footer Note</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-200">{footer ? `"${footer}"` : 'Not Set'}</span>
                   </div>
                 </div>
               </div>
@@ -906,6 +913,65 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </label>
               </div>
 
+              {/* Day Change Midnight Logout row */}
+              <div className="bg-slate-50 dark:bg-slate-950 rounded-2xl p-4 border border-slate-100 dark:border-slate-800/60 space-y-3">
+                <div className="flex justify-between items-center select-none gap-4">
+                  <div className="flex-1">
+                    <h4 className="text-xs font-bold text-slate-800 dark:text-slate-250 flex items-center gap-1.5">
+                      <Moon className="w-3.5 h-3.5 text-indigo-500" />
+                      Auto-Logout on Date Change (Midnight Rollover)
+                    </h4>
+                    <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 font-semibold">
+                      Automatically signs out session at 12:00 AM (midnight) when the date changes to ensure clean daily ledger and billing rollover.
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={autoLogoutOnDayChange}
+                      onChange={(e) => setAutoLogoutOnDayChange(e.target.checked)}
+                      className="sr-only peer" 
+                      id="day-change-auto-logout-toggle"
+                    />
+                    <div className="w-9 h-5 bg-slate-300 dark:bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2.5px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-500" />
+                  </label>
+                </div>
+
+                {autoLogoutOnDayChange && (
+                  <div className="pt-3 border-t border-slate-200/70 dark:border-slate-800/70 space-y-2">
+                    <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider select-none">
+                      Advance Warning Notification
+                    </label>
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                      <div className="flex-1">
+                        <select
+                          value={dayChangeWarningMinutes}
+                          onChange={(e) => setDayChangeWarningMinutes(Number(e.target.value))}
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-250 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-800 dark:text-slate-200 outline-none focus:border-indigo-500 cursor-pointer shadow-xs transition-colors"
+                        >
+                          <option value={2}>2 minutes before (11:58 PM)</option>
+                          <option value={5}>5 minutes before (11:55 PM - Recommended)</option>
+                          <option value={10}>10 minutes before (11:50 PM)</option>
+                          <option value={15}>15 minutes before (11:45 PM)</option>
+                        </select>
+                      </div>
+
+                      {onTestDayChangeWarning && (
+                        <button
+                          type="button"
+                          onClick={onTestDayChangeWarning}
+                          className="px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 text-indigo-600 dark:text-indigo-400 text-xs font-bold rounded-xl border border-indigo-200/80 dark:border-indigo-800/60 transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-1.5 shrink-0 shadow-xs"
+                          title="Simulate the 5-minute pre-logout warning banner and chime"
+                        >
+                          <Clock className="w-3.5 h-3.5" />
+                          Preview Notification Banner
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="flex items-center gap-3 pt-4 border-t border-slate-100 dark:border-slate-800/40">
                 <button
                   type="button"
@@ -1220,24 +1286,44 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <div className="w-12 h-12 rounded-full bg-indigo-50 dark:bg-indigo-950/40 text-indigo-650 dark:text-indigo-400 flex items-center justify-center mx-auto shadow-inner">
                     <ShieldCheck className="w-6 h-6" />
                   </div>
-                  <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">Hardware Biometrics</h4>
+                  <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">Biometric & Touch Unlock</h4>
                   <p className="text-[10px] text-slate-400 dark:text-slate-505 font-medium leading-relaxed">
-                    Link biometric sensors or launch safe touch simulator verification to bypass typing unlock keys on startup.
+                    {isWebAuthnSupported
+                      ? 'Link platform biometrics (fingerprint / face recognition) for fast hardware-secured login.'
+                      : 'Hardware WebAuthn biometrics is not supported in this Android WebView environment. Touch bypass provides simulated demo unlock without cryptographic security.'}
                   </p>
                 </div>
 
                 <div className="w-full space-y-3">
-                  <span className="text-[9px] px-2.5 py-1 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-855 rounded-full text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider block">
+                  <span className={`text-[9px] px-2.5 py-1 rounded-full font-bold uppercase tracking-wider block ${
+                    currentAuth.fpId === 'simulated_biometric'
+                      ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-900/50'
+                      : currentAuth.fpId
+                      ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/50'
+                      : 'bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-855 text-slate-500 dark:text-slate-400'
+                  }`}>
                     {biometricStatus}
                   </span>
 
-                  <button
-                    type="button"
-                    onClick={onRegisterBiometric}
-                    className="w-full py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white hover:text-white text-[10px] font-black uppercase tracking-wider rounded-xl cursor-pointer transition-all active:scale-95 shadow-sm"
-                  >
-                    Setup / Sync Biometric Credentials
-                  </button>
+                  <div className="flex flex-col gap-1.5">
+                    <button
+                      type="button"
+                      onClick={onRegisterBiometric}
+                      className="w-full py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-wider rounded-xl cursor-pointer transition-all active:scale-95 shadow-sm"
+                    >
+                      {currentAuth.fpId ? 'Reconfigure Credentials' : isWebAuthnSupported ? 'Setup Biometric Lock' : 'Setup Touch Bypass (Non-Secure)'}
+                    </button>
+
+                    {currentAuth.fpId && onRemoveBiometric && (
+                      <button
+                        type="button"
+                        onClick={onRemoveBiometric}
+                        className="w-full py-1.5 px-3 bg-slate-200/70 hover:bg-rose-100 dark:bg-slate-800 dark:hover:bg-rose-950/40 text-slate-600 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 text-[9px] font-bold uppercase tracking-wider rounded-xl cursor-pointer transition-all active:scale-95"
+                      >
+                        Remove / Disable Biometrics
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

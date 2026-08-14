@@ -163,6 +163,8 @@ export interface Settings {
   nearExpiryDefault: number;
   requireStaffPin: boolean;
   autoLockSession?: boolean;
+  autoLogoutOnDayChange?: boolean; // Automatic logout on date/day change at midnight
+  dayChangeWarningMinutes?: number; // Advance warning before midnight (default 5 min)
   logo?: string; // base64 brand logo
   currency?: string; // currency symbol or code e.g. Rs. or ₹ or $
   language?: string; // Active UI language e.g. English, Hindi

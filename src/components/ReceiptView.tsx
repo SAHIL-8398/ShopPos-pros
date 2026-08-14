@@ -9,6 +9,7 @@ import JsBarcode from 'jsbarcode';
 import { Share2, FileDown, MessageCircle, RefreshCw, X, Check } from 'lucide-react';
 import { Sale, Settings } from '../types';
 import { formatCurrency, copyToClipboard, formatDate } from '../utils';
+import { useDialog } from '../context/DialogContext';
 
 const getBarcodeDataURL = (text: string): string => {
   const canvas = document.createElement('canvas');
@@ -249,6 +250,7 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
   onNewBill,
   showNewBillButton = true
 }) => {
+  const { showAlert } = useDialog();
   const [copied, setCopied] = React.useState(false);
   const receiptText = buildReceiptText(sale, settings);
   const barcodeRef = React.useRef<HTMLCanvasElement>(null);
@@ -752,7 +754,7 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
       const doc = await generateThermalPDFDoc(false);
       doc.save(`Bill_${sale.billNo}_Thermal.pdf`);
     } catch (e: any) {
-      alert(`Thermal PDF Error: ${e.message}`);
+      showAlert(`Thermal PDF Error: ${e.message}`, 'PDF Error');
     }
   };
 
@@ -761,7 +763,7 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
       const doc = await generateThermalPDFDoc(true);
       doc.save(`Bill_${sale.billNo}_Thermal_58mm.pdf`);
     } catch (e: any) {
-      alert(`Thermal 58mm PDF Error: ${e.message}`);
+      showAlert(`Thermal 58mm PDF Error: ${e.message}`, 'PDF Error');
     }
   };
 
@@ -770,7 +772,7 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
       const doc = await generateA4PDFDoc();
       doc.save(`Invoice_${sale.billNo}_A4.pdf`);
     } catch (e: any) {
-      alert(`A4 PDF Generation Error: ${e.message}`);
+      showAlert(`A4 PDF Generation Error: ${e.message}`, 'PDF Error');
     }
   };
 
@@ -804,7 +806,7 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
         doc.save(`Invoice_${sale.billNo}_${pdfFormat}.pdf`);
         setShowShareModal(true);
       } catch (e) {
-        alert(`Sharing failed: ${err.message || err}`);
+        showAlert(`Sharing failed: ${err.message || err}`, 'Share Error');
       }
     }
   };

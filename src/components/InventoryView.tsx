@@ -8,6 +8,7 @@ import { Package, Search, Plus, Calendar, AlertTriangle, BadgePercent, Scan, Dow
 import { Product, Supplier } from '../types';
 import { formatCurrency, formatDate } from '../utils';
 import { useTranslation } from '../context/LocalizationContext';
+import { useDialog } from '../context/DialogContext';
 
 interface InventoryViewProps {
   products: Product[];
@@ -32,6 +33,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   onBulkUpdateProducts,
 }) => {
   const { t } = useTranslation();
+  const { showAlert } = useDialog();
   const [search, setSearch] = useState<string>('');
   const [filterTab, setFilterTab] = useState<'all' | 'low' | 'exp' | 'xpd'>('all');
   const [showOnlyLowStock, setShowOnlyLowStock] = useState<boolean>(false);
@@ -46,6 +48,13 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const today = new Date();
   const lowLimit = settings.lowStockDefault || 10;
   const expLimit = settings.nearExpiryDefault || 30;
+
+  // O(1) supplier lookup map
+  const suppliersMap = React.useMemo(() => {
+    const map = new Map<string, Supplier>();
+    suppliers.forEach(s => map.set(s.id, s));
+    return map;
+  }, [suppliers]);
 
   // Filter products by tab and search
   const filteredProducts = products.filter(p => {
@@ -116,6 +125,71 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     }
     return list;
   }, [filteredProducts, sortBy]);
+
+  // List Virtualization Engine for large inventory datasets (1,000 - 50,000 items)
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState<number>(0);
+  const [viewportHeight, setViewportHeight] = useState<number>(typeof window !== 'undefined' ? window.innerHeight : 800);
+  const ITEM_ESTIMATED_HEIGHT = 126; // Approximate average height of product card in pixels including gap
+  const OVERSCAN = 8; // Number of extra cards to render above & below viewport
+
+  React.useEffect(() => {
+    let ticking = false;
+    const handleScrollOrResize = () => {
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          setScrollTop(window.scrollY);
+          setViewportHeight(window.innerHeight);
+          ticking = false;
+        });
+        ticking = true;
+      }
+    };
+
+    window.addEventListener('scroll', handleScrollOrResize, { passive: true });
+    window.addEventListener('resize', handleScrollOrResize, { passive: true });
+    handleScrollOrResize();
+
+    return () => {
+      window.removeEventListener('scroll', handleScrollOrResize);
+      window.removeEventListener('resize', handleScrollOrResize);
+    };
+  }, []);
+
+  // Compute virtual slice indices
+  const totalItems = sortedAndFilteredProducts.length;
+  const isVirtualizing = totalItems > 40;
+
+  const { startIndex, endIndex, topSpacerHeight, bottomSpacerHeight } = React.useMemo(() => {
+    if (!isVirtualizing) {
+      return { startIndex: 0, endIndex: totalItems, topSpacerHeight: 0, bottomSpacerHeight: 0 };
+    }
+
+    const containerOffsetTop = containerRef.current
+      ? containerRef.current.getBoundingClientRect().top + window.scrollY
+      : 250;
+
+    const relativeScroll = Math.max(0, scrollTop - containerOffsetTop);
+    const visibleStart = Math.floor(relativeScroll / ITEM_ESTIMATED_HEIGHT);
+    const visibleEnd = Math.ceil((relativeScroll + viewportHeight) / ITEM_ESTIMATED_HEIGHT);
+
+    const start = Math.max(0, visibleStart - OVERSCAN);
+    const end = Math.min(totalItems, visibleEnd + OVERSCAN);
+
+    const topHeight = start * ITEM_ESTIMATED_HEIGHT;
+    const bottomHeight = Math.max(0, (totalItems - end) * ITEM_ESTIMATED_HEIGHT);
+
+    return {
+      startIndex: start,
+      endIndex: end,
+      topSpacerHeight: topHeight,
+      bottomSpacerHeight: bottomHeight
+    };
+  }, [isVirtualizing, totalItems, scrollTop, viewportHeight, ITEM_ESTIMATED_HEIGHT, OVERSCAN]);
+
+  const visibleProducts = isVirtualizing
+    ? sortedAndFilteredProducts.slice(startIndex, endIndex)
+    : sortedAndFilteredProducts;
 
   return (
     <div className="flex flex-col gap-3">
@@ -315,7 +389,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                       const data = JSON.parse(event.target?.result as string);
                       onImportProducts(data);
                     } catch (err) {
-                      alert('❌ Invalid JSON data file uploaded.');
+                      showAlert('Invalid JSON data file uploaded.', 'Import Error');
                     }
                   };
                   reader.readAsText(file);
@@ -451,10 +525,24 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         </div>
       )}
 
-      {/* Stock listings list */}
-      <div className="space-y-2 mt-1">
+      {/* Stock listings list with Virtualized Windowing */}
+      <div ref={containerRef} className="space-y-2 mt-1 relative">
+        {isVirtualizing && (
+          <div className="flex justify-between items-center px-1 text-[10px] text-slate-400 font-bold select-none">
+            <span>Showing products {startIndex + 1}–{Math.min(endIndex, totalItems)} of {totalItems}</span>
+            <span className="bg-indigo-50 dark:bg-indigo-950/70 text-indigo-600 dark:text-indigo-400 px-2 py-0.5 rounded-full font-mono text-[9px] border border-indigo-200/50">
+              ⚡ Virtualized Scroll
+            </span>
+          </div>
+        )}
+
+        {/* Top virtualization spacer */}
+        {isVirtualizing && topSpacerHeight > 0 && (
+          <div style={{ height: `${topSpacerHeight}px` }} aria-hidden="true" />
+        )}
+
         {sortedAndFilteredProducts.length > 0 ? (
-          sortedAndFilteredProducts.map(p => {
+          visibleProducts.map(p => {
             const definedThreshold = p.lowStockAlert !== null ? p.lowStockAlert : lowLimit;
             const isLowStock = p.qty <= definedThreshold;
             const isOutOfStock = p.qty <= 0;
@@ -478,7 +566,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             const marginAmount = sellPrice - p.buyPrice;
             const marginPct = sellPrice > 0 ? (marginAmount / sellPrice) * 100 : 0;
 
-            const supplier = suppliers.find(s => s.id === p.supplierId);
+            const supplier = p.supplierId ? suppliersMap.get(p.supplierId) : undefined;
 
             return (
               <button
@@ -588,6 +676,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             </p>
           </div>
         )}
+
+        {/* Bottom virtualization spacer */}
+        {isVirtualizing && bottomSpacerHeight > 0 && (
+          <div style={{ height: `${bottomSpacerHeight}px` }} aria-hidden="true" />
+        )}
       </div>
 
       {/* BULK ACTIONS STICKY FLOATING PANEL */}
@@ -688,7 +781,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 onClick={() => {
                   const finalCat = bulkCategory.trim();
                   if (!finalCat) {
-                    alert('⚠️ Select or type a Category group.');
+                    showAlert('Please select or type a Category group.', 'Category Required');
                     return;
                   }
                   
@@ -780,11 +873,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 type="button"
                 onClick={() => {
                   if (bulkDiscountValue < 0) {
-                    alert('⚠️ Discount amount cannot be negative.');
+                    showAlert('Discount amount cannot be negative.', 'Invalid Discount');
                     return;
                   }
                   if (bulkDiscountType === 'percentage' && bulkDiscountValue > 100) {
-                    alert('⚠️ Discount cannot exceed 100%.');
+                    showAlert('Discount cannot exceed 100%.', 'Invalid Discount');
                     return;
                   }
 

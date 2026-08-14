@@ -8,6 +8,7 @@ import { Search, ShoppingCart, Trash2, Plus, Minus, Scan, User, Phone, MapPin, C
 import { Product, SaleItem, Settings } from '../types';
 import { formatCurrency, generateQuotationPDF, generateDeliveryChallanPDF } from '../utils';
 import { useTranslation } from '../context/LocalizationContext';
+import { useDialog } from '../context/DialogContext';
 
 interface BillingViewProps {
   products: Product[];
@@ -55,6 +56,9 @@ export const BillingView: React.FC<BillingViewProps> = ({
   settings,
 }) => {
   const { t } = useTranslation();
+  const { showAlert, showConfirm: dialogConfirm, showPrompt: dialogPrompt } = useDialog();
+  const effectiveShowConfirm = showConfirm || dialogConfirm;
+  const effectiveShowPrompt = showPrompt || dialogPrompt;
   const [search, setSearch] = useState<string>('');
   const [custName, setCustName] = useState<string>('');
   const [custPhone, setCustPhone] = useState<string>('');
@@ -126,7 +130,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
                     setSearch('');
                     setTimeout(() => searchInputRef.current?.focus(), 50);
                   } else {
-                    alert(`Product "${exactMatch.name}" is out of stock.`);
+                    showAlert(`Product "${exactMatch.name}" is out of stock.`, 'Out of Stock');
                   }
                   return;
                 }
@@ -348,8 +352,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
                 type="button"
                 onClick={async () => {
                   const defaultVal = `Basket #${suspendedCarts.length + 1}`;
-                  const promptFn = showPrompt || (async (msg, def) => window.prompt(msg, def));
-                  const note = await promptFn(
+                  const note = await effectiveShowPrompt(
                     'Enter a short note or seat number for this suspended basket:',
                     defaultVal,
                     'Hold Basket'

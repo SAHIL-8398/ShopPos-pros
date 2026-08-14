@@ -7,6 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Plus, Trash, Users, Save, ShieldCheck, CheckCircle2, Key, Users2, Delete, LogOut } from 'lucide-react';
 import { Staff, Sale, StaffActivityLog } from '../types';
 import { formatDate } from '../utils';
+import { useDialog } from '../context/DialogContext';
 
 interface StaffRosterViewModalProps {
   staff: Staff[];
@@ -35,6 +36,7 @@ export const StaffRosterViewModal: React.FC<StaffRosterViewModalProps> = ({
   activeStaffId = null,
   onSelectActiveStaff,
 }) => {
+  const { showAlert } = useDialog();
   const [activeTab, setActiveTab] = useState<'pin' | 'manage' | 'activity'>('pin');
   const [formId, setFormId] = useState<string | null>(null);
   const [name, setName] = useState<string>('');
@@ -126,9 +128,13 @@ export const StaffRosterViewModal: React.FC<StaffRosterViewModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return alert('Staff Name is required!');
+    if (!name.trim()) {
+      showAlert('Staff Name is required!', 'Required Field');
+      return;
+    }
     if (pin.trim() && (pin.trim().length !== 4 || isNaN(Number(pin.trim())))) {
-      return alert('Enter a valid 4-digit PIN code!');
+      showAlert('Please enter a valid 4-digit numeric PIN code!', 'Invalid PIN');
+      return;
     }
 
     onSaveStaff({

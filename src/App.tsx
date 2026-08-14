@@ -29,7 +29,8 @@ import {
   Calendar,
   ArrowUpDown,
   Calculator,
-  FileText
+  FileText,
+  ArrowLeft
 } from 'lucide-react';
 
 import { AppDatabase, Product, Sale, Customer, Expense, Supplier, Staff, Settings, SaleItem, PurchaseItem } from './types';
@@ -64,14 +65,18 @@ import { StaffRosterViewModal } from './components/StaffRosterViewModal';
 import { ExpensesModal } from './components/ExpensesModal';
 import { CustomerFormModal } from './components/CustomerFormModal';
 import { CalculatorModal } from './components/CalculatorModal';
+import { DayChangeLogoutBanner } from './components/DayChangeLogoutBanner';
 
 interface AppHistoryState {
   idx: number;
   tab: string;
   isProductModalOpen: boolean;
+  activeProductId: string | null;
   isCheckoutOpen: boolean;
   isReceiptOpen: boolean;
+  receiptSaleId: string | null;
   isScannerOpen: boolean;
+  scannerMode: 'bill' | 'restock' | 'prod' | 'return_bill';
   isSuppliersOpen: boolean;
   isStaffOpen: boolean;
   isLabelsOpen: boolean;
@@ -79,6 +84,8 @@ interface AppHistoryState {
   isHistoryOpen: boolean;
   isAlertsOpen: boolean;
   isCustomerModalOpen: boolean;
+  activeCustomerId: string | null;
+  isCalculatorOpen: boolean;
   isUpiQrOpen: boolean;
   dayDetailsDate: string | null;
   activeBillDetailsId: string | null;
@@ -89,6 +96,11 @@ export default function App() {
   // Navigation history tracker refs
   const historyIdxRef = useRef<number>(0);
   const isInternalStateChange = useRef<boolean>(false);
+  const isCheckingOutRef = useRef<boolean>(false);
+
+  // Debounced write engine refs for high-throughput typing & state changes
+  const pendingDbRef = useRef<AppDatabase | null>(null);
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Database State
   const [db, setDb] = useState<AppDatabase | null>(null);
@@ -165,6 +177,16 @@ export default function App() {
   const [activeStaffId, setActiveStaffId] = useState<string | null>(() => {
     return localStorage.getItem('shoppos_active_staff_id');
   });
+
+  // Day / Date Change (Midnight Rollover) Automatic Logout states
+  const sessionDateRef = useRef<string>(getTodayDateString());
+  const snoozeUntilMsRef = useRef<number | null>(null);
+  const [dayChangeCountdownSecs, setDayChangeCountdownSecs] = useState<number | null>(null);
+  const [isDayChangeWarningOpen, setIsDayChangeWarningOpen] = useState<boolean>(false);
+  const [isDayChangeBannerMinimized, setIsDayChangeBannerMinimized] = useState<boolean>(false);
+  const [sessionLogoutReason, setSessionLogoutReason] = useState<string | null>(null);
+  const [isSimulatedWarningTest, setIsSimulatedWarningTest] = useState<boolean>(false);
+  const testCountdownTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleSelectActiveStaff = async (id: string | null) => {
     setActiveStaffId(id);
@@ -377,18 +399,25 @@ export default function App() {
 
   // Sync activeTab and open modals with browser history for multi-step back navigation
   useEffect(() => {
+    const validTabs = ['dashboard', 'billing', 'inventory', 'customers', 'documents', 'reports', 'settings'];
+
     // Initialize history state on load if not present
     if (!window.history.state || typeof window.history.state.idx !== 'number') {
-      const initialHash = window.location.hash.substring(2);
-      const validTabs = ['dashboard', 'billing', 'inventory', 'customers', 'reports', 'settings'];
+      const initialHash = window.location.hash.replace(/^#\/?/, '').split('?')[0];
       const startTab = validTabs.includes(initialHash) ? initialHash : 'dashboard';
-      window.history.replaceState({
-        idx: 0,
+      const initialIdx = 0;
+      historyIdxRef.current = initialIdx;
+      
+      const initState: AppHistoryState = {
+        idx: initialIdx,
         tab: startTab,
         isProductModalOpen: false,
+        activeProductId: null,
         isCheckoutOpen: false,
         isReceiptOpen: false,
+        receiptSaleId: null,
         isScannerOpen: false,
+        scannerMode: 'bill',
         isSuppliersOpen: false,
         isStaffOpen: false,
         isLabelsOpen: false,
@@ -396,79 +425,85 @@ export default function App() {
         isHistoryOpen: false,
         isAlertsOpen: false,
         isCustomerModalOpen: false,
+        activeCustomerId: null,
+        isCalculatorOpen: false,
         isUpiQrOpen: false,
         dayDetailsDate: null,
         activeBillDetailsId: null,
         returnBillId: null
-      }, '');
-      if (window.location.hash !== `#/${startTab}`) {
-        window.location.hash = `/${startTab}`;
+      };
+
+      window.history.replaceState(initState, '', `#/${startTab}`);
+      if (activeTab !== startTab) {
+        setActiveTab(startTab);
       }
     } else {
       // If we already have a state on load, restore it
       const state = window.history.state as AppHistoryState;
-      historyIdxRef.current = state.idx;
-      setActiveTab(state.tab);
-      setIsProductModalOpen(state.isProductModalOpen);
-      setIsCheckoutOpen(state.isCheckoutOpen);
-      setIsReceiptOpen(state.isReceiptOpen);
-      setIsScannerOpen(state.isScannerOpen);
-      setIsSuppliersOpen(state.isSuppliersOpen);
-      setIsStaffOpen(state.isStaffOpen);
-      setIsLabelsOpen(state.isLabelsOpen);
-      setIsExpensesOpen(state.isExpensesOpen);
-      setIsHistoryOpen(state.isHistoryOpen);
-      setIsAlertsOpen(state.isAlertsOpen);
-      setIsCustomerModalOpen(state.isCustomerModalOpen);
-      setIsUpiQrOpen(state.isUpiQrOpen);
-      setDayDetailsDate(state.dayDetailsDate);
-      setActiveBillDetailsId(state.activeBillDetailsId);
-      setReturnBillId(state.returnBillId);
+      historyIdxRef.current = state.idx || 0;
+      if (state.tab && validTabs.includes(state.tab)) {
+        setActiveTab(state.tab);
+      }
+      setIsProductModalOpen(Boolean(state.isProductModalOpen));
+      setActiveProductId(state.activeProductId || null);
+      setIsCheckoutOpen(Boolean(state.isCheckoutOpen));
+      setIsReceiptOpen(Boolean(state.isReceiptOpen));
+      setIsScannerOpen(Boolean(state.isScannerOpen));
+      if (state.scannerMode) setScannerMode(state.scannerMode);
+      setIsSuppliersOpen(Boolean(state.isSuppliersOpen));
+      setIsStaffOpen(Boolean(state.isStaffOpen));
+      setIsLabelsOpen(Boolean(state.isLabelsOpen));
+      setIsExpensesOpen(Boolean(state.isExpensesOpen));
+      setIsHistoryOpen(Boolean(state.isHistoryOpen));
+      setIsAlertsOpen(Boolean(state.isAlertsOpen));
+      setIsCustomerModalOpen(Boolean(state.isCustomerModalOpen));
+      setActiveCustomerId(state.activeCustomerId || null);
+      setIsCalculatorOpen(Boolean(state.isCalculatorOpen));
+      setIsUpiQrOpen(Boolean(state.isUpiQrOpen));
+      setDayDetailsDate(state.dayDetailsDate || null);
+      setActiveBillDetailsId(state.activeBillDetailsId || null);
+      setReturnBillId(state.returnBillId || null);
     }
 
     const handlePopState = (event: PopStateEvent) => {
       const state = event.state as AppHistoryState;
+      isInternalStateChange.current = true;
+      
       if (state && typeof state.idx === 'number') {
-        isInternalStateChange.current = true;
-        
         historyIdxRef.current = state.idx;
-        setActiveTab(state.tab);
-        setIsProductModalOpen(state.isProductModalOpen);
-        setIsCheckoutOpen(state.isCheckoutOpen);
-        setIsReceiptOpen(state.isReceiptOpen);
-        setIsScannerOpen(state.isScannerOpen);
-        setIsSuppliersOpen(state.isSuppliersOpen);
-        setIsStaffOpen(state.isStaffOpen);
-        setIsLabelsOpen(state.isLabelsOpen);
-        setIsExpensesOpen(state.isExpensesOpen);
-        setIsHistoryOpen(state.isHistoryOpen);
-        setIsAlertsOpen(state.isAlertsOpen);
-        setIsCustomerModalOpen(state.isCustomerModalOpen);
-        setIsUpiQrOpen(state.isUpiQrOpen);
-        setDayDetailsDate(state.dayDetailsDate);
-        setActiveBillDetailsId(state.activeBillDetailsId);
-        setReturnBillId(state.returnBillId);
-
-        // Keep hash in sync
-        if (window.location.hash !== `#/${state.tab}`) {
-          window.location.hash = `/${state.tab}`;
+        if (state.tab && validTabs.includes(state.tab)) {
+          setActiveTab(state.tab);
         }
-
-        setTimeout(() => {
-          isInternalStateChange.current = false;
-        }, 0);
+        setIsProductModalOpen(Boolean(state.isProductModalOpen));
+        setActiveProductId(state.activeProductId || null);
+        setIsCheckoutOpen(Boolean(state.isCheckoutOpen));
+        setIsReceiptOpen(Boolean(state.isReceiptOpen));
+        setIsScannerOpen(Boolean(state.isScannerOpen));
+        if (state.scannerMode) setScannerMode(state.scannerMode);
+        setIsSuppliersOpen(Boolean(state.isSuppliersOpen));
+        setIsStaffOpen(Boolean(state.isStaffOpen));
+        setIsLabelsOpen(Boolean(state.isLabelsOpen));
+        setIsExpensesOpen(Boolean(state.isExpensesOpen));
+        setIsHistoryOpen(Boolean(state.isHistoryOpen));
+        setIsAlertsOpen(Boolean(state.isAlertsOpen));
+        setIsCustomerModalOpen(Boolean(state.isCustomerModalOpen));
+        setActiveCustomerId(state.activeCustomerId || null);
+        setIsCalculatorOpen(Boolean(state.isCalculatorOpen));
+        setIsUpiQrOpen(Boolean(state.isUpiQrOpen));
+        setDayDetailsDate(state.dayDetailsDate || null);
+        setActiveBillDetailsId(state.activeBillDetailsId || null);
+        setReturnBillId(state.returnBillId || null);
       } else {
-        // If state is null (e.g., from manual hash typing), handle hash change
-        const hash = window.location.hash.substring(2);
-        const validTabs = ['dashboard', 'billing', 'inventory', 'customers', 'reports', 'settings'];
+        // If state is null (e.g., from direct hash change), restore tab from hash
+        const hash = window.location.hash.replace(/^#\/?/, '').split('?')[0];
         if (validTabs.includes(hash)) {
-          isInternalStateChange.current = true;
           setActiveTab(hash);
-          setTimeout(() => {
-            isInternalStateChange.current = false;
-          }, 0);
         }
       }
+
+      setTimeout(() => {
+        isInternalStateChange.current = false;
+      }, 50);
     };
 
     window.addEventListener('popstate', handlePopState);
@@ -482,15 +517,18 @@ export default function App() {
     if (isInternalStateChange.current) return;
 
     const currentIdx = historyIdxRef.current;
-    const currentState = window.history.state as AppHistoryState;
+    const currentState = window.history.state as AppHistoryState | null;
 
     // Build the state representation of the current React state
     const targetState: Omit<AppHistoryState, 'idx'> = {
       tab: activeTab,
       isProductModalOpen,
+      activeProductId,
       isCheckoutOpen,
       isReceiptOpen,
+      receiptSaleId: activeReceiptSale?.id || null,
       isScannerOpen,
+      scannerMode,
       isSuppliersOpen,
       isStaffOpen,
       isLabelsOpen,
@@ -498,13 +536,18 @@ export default function App() {
       isHistoryOpen,
       isAlertsOpen,
       isCustomerModalOpen,
+      activeCustomerId,
+      isCalculatorOpen,
       isUpiQrOpen,
       dayDetailsDate,
       activeBillDetailsId,
       returnBillId
     };
 
-    if (!currentState) return;
+    if (!currentState) {
+      window.history.replaceState({ ...targetState, idx: currentIdx }, '', `#/${activeTab}`);
+      return;
+    }
 
     // Check if any modal state or tab changed
     const tabChanged = currentState.tab !== activeTab;
@@ -522,6 +565,7 @@ export default function App() {
       currentState.isHistoryOpen,
       currentState.isAlertsOpen,
       currentState.isCustomerModalOpen,
+      currentState.isCalculatorOpen,
       currentState.isUpiQrOpen,
       !!currentState.dayDetailsDate,
       !!currentState.activeBillDetailsId,
@@ -540,6 +584,7 @@ export default function App() {
       isHistoryOpen,
       isAlertsOpen,
       isCustomerModalOpen,
+      isCalculatorOpen,
       isUpiQrOpen,
       !!dayDetailsDate,
       !!activeBillDetailsId,
@@ -550,26 +595,20 @@ export default function App() {
       // Something was opened or tab changed -> Push new history state!
       const nextIdx = currentIdx + 1;
       historyIdxRef.current = nextIdx;
-      window.history.pushState({ ...targetState, idx: nextIdx }, '');
-      
-      // Keep hash in sync
-      if (window.location.hash !== `#/${activeTab}`) {
-        window.location.hash = `/${activeTab}`;
-      }
-    } else if (currentOpenCount < prevOpenCount) {
-      // Something was closed by clicking close button in UI -> Go back in history!
-      window.history.back();
+      window.history.pushState({ ...targetState, idx: nextIdx }, '', `#/${activeTab}`);
     } else {
-      // State updated but modal count and tab did not change (e.g. activeProductId inside modal changed)
-      // Just replace current state so state is kept perfectly updated without growing history stack
-      window.history.replaceState({ ...targetState, idx: currentIdx }, '');
+      // State updated or modal closed in UI -> replace state cleanly
+      window.history.replaceState({ ...targetState, idx: currentIdx }, '', `#/${activeTab}`);
     }
   }, [
     activeTab,
     isProductModalOpen,
+    activeProductId,
     isCheckoutOpen,
     isReceiptOpen,
+    activeReceiptSale?.id,
     isScannerOpen,
+    scannerMode,
     isSuppliersOpen,
     isStaffOpen,
     isLabelsOpen,
@@ -577,6 +616,8 @@ export default function App() {
     isHistoryOpen,
     isAlertsOpen,
     isCustomerModalOpen,
+    activeCustomerId,
+    isCalculatorOpen,
     isUpiQrOpen,
     dayDetailsDate,
     activeBillDetailsId,
@@ -680,6 +721,127 @@ export default function App() {
     };
   }, [isAuthenticated, db?.settings.autoLockSession]);
 
+  // ════════════════════════════════════════
+  // AUTOMATIC LOGOUT ON DATE / DAY CHANGE (MIDNIGHT) WITH 5-MIN PRE-WARNING
+  // ════════════════════════════════════════
+  useEffect(() => {
+    if (!isAuthenticated || !db || db.settings.autoLogoutOnDayChange === false) {
+      if (!isSimulatedWarningTest) {
+        setIsDayChangeWarningOpen(false);
+        setDayChangeCountdownSecs(null);
+      }
+      return;
+    }
+
+    const warningMinutes = db.settings.dayChangeWarningMinutes ?? 5;
+    const warningThresholdSecs = warningMinutes * 60;
+
+    if (!sessionDateRef.current) {
+      sessionDateRef.current = getTodayDateString();
+    }
+
+    let hasPlayedWarningChime = false;
+
+    const checkMidnightAndDayChange = () => {
+      if (isSimulatedWarningTest) return;
+
+      const now = new Date();
+      const currentCalDate = getTodayDateString();
+
+      // 1. Calendar date rolled over past midnight
+      if (sessionDateRef.current && sessionDateRef.current !== currentCalDate) {
+        performDayChangeLogout();
+        return;
+      }
+
+      // 2. Time remaining until next midnight (00:00:00)
+      const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
+      let targetDeadlineMs = nextMidnight.getTime();
+
+      if (snoozeUntilMsRef.current && snoozeUntilMsRef.current > targetDeadlineMs) {
+        targetDeadlineMs = snoozeUntilMsRef.current;
+      }
+
+      const msRemaining = targetDeadlineMs - now.getTime();
+      const secsRemaining = Math.max(0, Math.floor(msRemaining / 1000));
+
+      if (secsRemaining <= 0) {
+        performDayChangeLogout();
+        return;
+      }
+
+      if (secsRemaining <= warningThresholdSecs) {
+        setDayChangeCountdownSecs(secsRemaining);
+        setIsDayChangeWarningOpen(true);
+
+        if (!hasPlayedWarningChime) {
+          hasPlayedWarningChime = true;
+          playBeepSound('error');
+          if ('Notification' in window && Notification.permission === 'granted') {
+            try {
+              new Notification('⚠️ ShopPOS Midnight Day-Change Warning', {
+                body: `Automatic logout in ${Math.ceil(secsRemaining / 60)} minutes for daily accounting rollover.`,
+              });
+            } catch (e) {
+              // ignore
+            }
+          }
+        }
+      } else {
+        setIsDayChangeWarningOpen(false);
+        hasPlayedWarningChime = false;
+      }
+    };
+
+    checkMidnightAndDayChange();
+    const interval = setInterval(checkMidnightAndDayChange, 1000);
+
+    const handleFocusCheck = () => checkMidnightAndDayChange();
+    window.addEventListener('focus', handleFocusCheck);
+    document.addEventListener('visibilitychange', handleFocusCheck);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', handleFocusCheck);
+      document.removeEventListener('visibilitychange', handleFocusCheck);
+    };
+  }, [isAuthenticated, db?.settings?.autoLogoutOnDayChange, db?.settings?.dayChangeWarningMinutes, isSimulatedWarningTest]);
+
+  // Flush pending debounced database write immediately to disk
+  const flushPendingSave = async () => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    if (pendingDbRef.current && idbConn) {
+      const toSave = pendingDbRef.current;
+      pendingDbRef.current = null;
+      try {
+        await saveDBToIndexedDB(idbConn, toSave);
+        const stats = await estimateStorage();
+        setStorageStats(stats);
+      } catch (err) {
+        console.error('Failed to flush to IndexedDB:', err);
+      }
+    }
+  };
+
+  // Ensure un-flushed writes are safely committed on window close or tab navigation
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (pendingDbRef.current && idbConn) {
+        saveDBToIndexedDB(idbConn, pendingDbRef.current);
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
+  }, [idbConn]);
+
   if (!db || !idbConn) {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col justify-center items-center text-white">
@@ -689,14 +851,23 @@ export default function App() {
     );
   }
 
-  // Trigger IndexedDB saves
-  const triggerSave = async (updatedDb: AppDatabase) => {
+  // Trigger IndexedDB saves: updates UI state synchronously, debounces & coalesces disk writes to prevent I/O spam
+  const triggerSave = async (updatedDb: AppDatabase, options?: { immediate?: boolean }) => {
     setDb(updatedDb);
-    if (idbConn) {
-      await saveDBToIndexedDB(idbConn, updatedDb);
-      const stats = await estimateStorage();
-      setStorageStats(stats);
+    pendingDbRef.current = updatedDb;
+
+    if (options?.immediate) {
+      await flushPendingSave();
+      return;
     }
+
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    saveTimeoutRef.current = setTimeout(async () => {
+      await flushPendingSave();
+    }, 250);
   };
 
   // ════════════════════════════════════════
@@ -726,6 +897,9 @@ export default function App() {
       await triggerSave(updated);
       
       localStorage.setItem('sp_session', '1');
+      sessionDateRef.current = getTodayDateString();
+      snoozeUntilMsRef.current = null;
+      setSessionLogoutReason(null);
       setIsAuthenticated(true);
       setLoginPw('');
       setLoginUserId('');
@@ -773,8 +947,59 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    if (activeStaffIdRef.current) {
+      handleSelectActiveStaff(null);
+    }
     localStorage.removeItem('sp_session');
     setIsAuthenticated(false);
+    setIsDayChangeWarningOpen(false);
+    setDayChangeCountdownSecs(null);
+    snoozeUntilMsRef.current = null;
+  };
+
+  const performDayChangeLogout = () => {
+    if (activeStaffIdRef.current) {
+      handleSelectActiveStaff(null);
+    }
+    localStorage.removeItem('sp_session');
+    setIsAuthenticated(false);
+    setIsDayChangeWarningOpen(false);
+    setDayChangeCountdownSecs(null);
+    snoozeUntilMsRef.current = null;
+    sessionDateRef.current = getTodayDateString();
+
+    playBeepSound('error');
+    setSessionLogoutReason('📅 Session was automatically signed out due to Date Change (Midnight Rollover) for clean daily ledger & inventory synchronization.');
+  };
+
+  const handleSnoozeDayChangeLogout = (minutes: number = 15) => {
+    const newDeadline = Date.now() + minutes * 60 * 1000;
+    snoozeUntilMsRef.current = newDeadline;
+    setIsDayChangeWarningOpen(false);
+    
+    const newTimeStr = new Date(newDeadline).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+    showAlert(`Session extended by ${minutes} minutes. Automatic logout postponed to ${newTimeStr}.`, 'Session Extended');
+  };
+
+  const handleTestDayChangeWarning = () => {
+    setIsSimulatedWarningTest(true);
+    setDayChangeCountdownSecs(300); // 5 minutes preview
+    setIsDayChangeWarningOpen(true);
+    setIsDayChangeBannerMinimized(false);
+    playBeepSound('error');
+
+    if (testCountdownTimerRef.current) clearInterval(testCountdownTimerRef.current);
+    testCountdownTimerRef.current = setInterval(() => {
+      setDayChangeCountdownSecs((prev) => {
+        if (prev === null || prev <= 1) {
+          if (testCountdownTimerRef.current) clearInterval(testCountdownTimerRef.current);
+          setIsDayChangeWarningOpen(false);
+          setIsSimulatedWarningTest(false);
+          return null;
+        }
+        return prev - 1;
+      });
+    }, 1000);
   };
 
   const handleSuspendCart = (note: string) => {
@@ -900,101 +1125,108 @@ export default function App() {
   };
 
   const handleCompleteCheckout = async (checkoutDetails: any) => {
-    const today = getTodayDateString();
-    const timeStr = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
-    
-    // Generate invoice number formatted as DDMMYY-XXXX (e.g., 020726-0001)
-    const [year, month, day] = today.split('-');
-    const yy = year.slice(-2);
-    const datePrefix = `${day}${month}${yy}`;
-    
-    const salesToday = db.sales.filter(s => s.date === today);
-    const seq = salesToday.length + 1;
-    const billNumber = `${datePrefix}-${String(seq).padStart(4, '0')}`;
+    if (isCheckingOutRef.current) return;
+    isCheckingOutRef.current = true;
 
-    let finalCreditCustId = checkoutDetails.creditCustId;
-    let finalCustomerName = checkoutCustInfo?.name || '';
-    let finalCustomerPhone = checkoutCustInfo?.phone || '';
-    let finalCustomerAddress = checkoutCustInfo?.address || '';
-    let updatedCustomers = [...db.customers];
+    try {
+      const today = getTodayDateString();
+      const timeStr = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+      
+      // Generate invoice number formatted as DDMMYY-XXXX (e.g., 020726-0001)
+      const [year, month, day] = today.split('-');
+      const yy = year.slice(-2);
+      const datePrefix = `${day}${month}${yy}`;
+      
+      const salesToday = db.sales.filter(s => s.date === today);
+      const seq = salesToday.length + 1;
+      const billNumber = `${datePrefix}-${String(seq).padStart(4, '0')}`;
 
-    if (checkoutDetails.newCustomer) {
-      const newCustId = generateId();
-      const newCustObj: Customer = {
-        id: newCustId,
-        name: checkoutDetails.newCustomer.name,
-        phone: checkoutDetails.newCustomer.phone,
-        email: checkoutDetails.newCustomer.email || '',
-        address: checkoutDetails.newCustomer.address || '',
-        createdAt: new Date().toISOString(),
+      let finalCreditCustId = checkoutDetails.creditCustId;
+      let finalCustomerName = checkoutCustInfo?.name || '';
+      let finalCustomerPhone = checkoutCustInfo?.phone || '';
+      let finalCustomerAddress = checkoutCustInfo?.address || '';
+      let updatedCustomers = [...db.customers];
+
+      if (checkoutDetails.newCustomer) {
+        const newCustId = generateId();
+        const newCustObj: Customer = {
+          id: newCustId,
+          name: checkoutDetails.newCustomer.name,
+          phone: checkoutDetails.newCustomer.phone,
+          email: checkoutDetails.newCustomer.email || '',
+          address: checkoutDetails.newCustomer.address || '',
+          createdAt: new Date().toISOString(),
+        };
+        updatedCustomers.push(newCustObj);
+        finalCreditCustId = newCustId;
+        finalCustomerName = newCustObj.name;
+        finalCustomerPhone = newCustObj.phone;
+        finalCustomerAddress = newCustObj.address;
+      } else {
+        const matchedCustomer = db.customers.find(c => c.id === checkoutDetails.creditCustId);
+        if (matchedCustomer) {
+          finalCustomerName = matchedCustomer.name;
+          finalCustomerPhone = matchedCustomer.phone || '';
+          finalCustomerAddress = matchedCustomer.address || '';
+        }
+      }
+
+      // Construct Sale JSON
+      const sale: Sale = {
+        id: generateId(),
+        billNo: billNumber,
+        date: today,
+        time: timeStr,
+        customer: finalCustomerName || 'Walk-In Customer',
+        customerPhone: finalCustomerPhone,
+        customerAddress: finalCustomerAddress,
+        staffId: checkoutDetails.staffId,
+        staffName: checkoutDetails.staffName,
+        items: cart,
+        subtotal: cart.reduce((sum, item) => sum + item.price * item.qty, 0),
+        discount: checkoutDetails.discount,
+        gst: checkoutDetails.gst,
+        gstPct: checkoutDetails.gstPct,
+        total: checkoutDetails.total,
+        profit: checkoutDetails.profit,
+        paymentMethod: checkoutDetails.paymentMethod,
+        splitDetails: checkoutDetails.splitDetails,
+        creditPaid: false,
+        voided: false,
+        creditCustId: finalCreditCustId,
+        pointsRedeemed: checkoutDetails.pointsRedeemed || 0,
       };
-      updatedCustomers.push(newCustObj);
-      finalCreditCustId = newCustId;
-      finalCustomerName = newCustObj.name;
-      finalCustomerPhone = newCustObj.phone;
-      finalCustomerAddress = newCustObj.address;
-    } else {
-      const matchedCustomer = db.customers.find(c => c.id === checkoutDetails.creditCustId);
-      if (matchedCustomer) {
-        finalCustomerName = matchedCustomer.name;
-        finalCustomerPhone = matchedCustomer.phone || '';
-        finalCustomerAddress = matchedCustomer.address || '';
-      }
+
+      // Deduct stock levels indices matched
+      const updatedProducts = db.products.map(p => {
+        const cartItem = cart.find(i => i.id === p.id);
+        if (cartItem) {
+          return { ...p, qty: Math.max(0, p.qty - cartItem.qty) };
+        }
+        return p;
+      });
+
+      const updated = {
+        ...db,
+        customers: updatedCustomers,
+        products: updatedProducts,
+        sales: [...db.sales, sale],
+        meta: { ...db.meta, billNo: db.meta.billNo } // Preserve meta just in case
+      };
+
+      await triggerSave(updated);
+      
+      // Reset Cart
+      setCart([]);
+      setCheckoutCustInfo(null);
+      setIsCheckoutOpen(false);
+
+      // Open receipts preview thermal model
+      setActiveReceiptSale(sale);
+      setIsReceiptOpen(true);
+    } finally {
+      isCheckingOutRef.current = false;
     }
-
-    // Construct Sale JSON
-    const sale: Sale = {
-      id: generateId(),
-      billNo: billNumber,
-      date: today,
-      time: timeStr,
-      customer: finalCustomerName || 'Walk-In Customer',
-      customerPhone: finalCustomerPhone,
-      customerAddress: finalCustomerAddress,
-      staffId: checkoutDetails.staffId,
-      staffName: checkoutDetails.staffName,
-      items: cart,
-      subtotal: cart.reduce((sum, item) => sum + item.price * item.qty, 0),
-      discount: checkoutDetails.discount,
-      gst: checkoutDetails.gst,
-      gstPct: checkoutDetails.gstPct,
-      total: checkoutDetails.total,
-      profit: checkoutDetails.profit,
-      paymentMethod: checkoutDetails.paymentMethod,
-      splitDetails: checkoutDetails.splitDetails,
-      creditPaid: false,
-      voided: false,
-      creditCustId: finalCreditCustId,
-      pointsRedeemed: checkoutDetails.pointsRedeemed || 0,
-    };
-
-    // Deduct stock levels indices matched
-    const updatedProducts = db.products.map(p => {
-      const cartItem = cart.find(i => i.id === p.id);
-      if (cartItem) {
-        return { ...p, qty: Math.max(0, p.qty - cartItem.qty) };
-      }
-      return p;
-    });
-
-    const updated = {
-      ...db,
-      customers: updatedCustomers,
-      products: updatedProducts,
-      sales: [...db.sales, sale],
-      meta: { ...db.meta, billNo: db.meta.billNo } // Preserve meta just in case
-    };
-
-    await triggerSave(updated);
-    
-    // Reset Cart
-    setCart([]);
-    setCheckoutCustInfo(null);
-    setIsCheckoutOpen(false);
-
-    // Open receipts preview thermal model
-    setActiveReceiptSale(sale);
-    setIsReceiptOpen(true);
   };
 
   // ════════════════════════════════════════
@@ -1037,8 +1269,8 @@ export default function App() {
 
       if (!window.PublicKeyCredential) {
         const confirmSim = await showConfirm(
-          "Physical hardware biometrics is unavailable in this environment.\n\nWould you like to link a virtual fingerprint simulation for verification testing?",
-          "Link Virtual Fingerprint"
+          "Hardware biometric sensors (WebAuthn) are not supported in this Android WebView environment.\n\nWould you like to enable a Non-Secure Virtual Touch Bypass (for demo / quick testing only)?",
+          "Enable Non-Secure Touch Bypass"
         );
         if (confirmSim) {
           const updated = {
@@ -1046,7 +1278,7 @@ export default function App() {
             auth: { ...db.auth, fpId: 'simulated_biometric', rpId }
           };
           await triggerSave(updated);
-          await showAlert('Virtual fingerprint biometric registered successfully! You can now use the fingerprint login button.', 'Biometrics Setup');
+          await showAlert('Virtual Touch Bypass enabled (Non-Secure). This will be clearly labeled as non-secure on the login screen.', 'Touch Bypass Active');
         }
         return;
       }
@@ -1077,8 +1309,8 @@ export default function App() {
       } catch (innerErr: any) {
         console.warn('Physical biometric registration blocked/failed, setting up simulated:', innerErr);
         const confirmSim = await showConfirm(
-          "Physical biometrics was blocked or interrupted (e.g. inside sandboxed iframe).\n\nWould you like to set up a virtual fingerprint simulation for verification instead?",
-          "Link Virtual Fingerprint"
+          "Hardware biometrics was blocked or interrupted (e.g. inside sandboxed WebView).\n\nWould you like to enable a Non-Secure Virtual Touch Bypass for testing instead?",
+          "Enable Non-Secure Touch Bypass"
         );
         if (confirmSim) {
           const updated = {
@@ -1086,7 +1318,7 @@ export default function App() {
             auth: { ...db.auth, fpId: 'simulated_biometric', rpId }
           };
           await triggerSave(updated);
-          await showAlert('Virtual fingerprint biometric registered successfully! You can now use the fingerprint login button.', 'Biometrics Setup');
+          await showAlert('Virtual Touch Bypass enabled (Non-Secure). This will be clearly labeled as non-secure on the login screen.', 'Touch Bypass Active');
         }
       }
     } catch (err: any) {
@@ -1229,14 +1461,15 @@ export default function App() {
     }
 
     let merged = [...db.products];
+    const existingIds = new Set<string>(merged.map(p => p.id));
     let inserted = 0;
     let updated = 0;
 
     importedProducts.forEach(ip => {
-      // Find matches by ID, barcodes, or name
+      // Find matches by exact ID match, barcode match, or case-insensitive name match
       const idx = merged.findIndex(p => 
         (p.id && ip.id && p.id === ip.id) ||
-        (p.barcode && ip.barcode && p.barcode.trim() === ip.barcode.trim()) ||
+        (p.barcode && ip.barcode && p.barcode.trim() && p.barcode.trim() === ip.barcode.trim()) ||
         (p.name.toLowerCase().trim() === ip.name.toLowerCase().trim())
       );
 
@@ -1244,6 +1477,7 @@ export default function App() {
         merged[idx] = {
           ...merged[idx],
           ...ip,
+          id: merged[idx].id, // Retain existing guaranteed non-colliding ID
           qty: Number(ip.qty) || 0,
           mrp: Number(ip.mrp) || 0,
           sellPrice: Number(ip.sellPrice) || Number(ip.mrp) || 0,
@@ -1251,8 +1485,15 @@ export default function App() {
         };
         updated++;
       } else {
+        // Collision-proof ID allocation
+        let newId = ip.id && typeof ip.id === 'string' && !existingIds.has(ip.id) ? ip.id : generateId();
+        while (existingIds.has(newId)) {
+          newId = generateId();
+        }
+        existingIds.add(newId);
+
         merged.push({
-          id: ip.id || 'p_' + Math.random().toString(36).slice(2, 11),
+          id: newId,
           name: ip.name,
           barcode: ip.barcode || '',
           category: ip.category || 'Other',
@@ -1272,7 +1513,7 @@ export default function App() {
       }
     });
 
-    await triggerSave({ ...db, products: merged });
+    await triggerSave({ ...db, products: merged }, { immediate: true });
     await showAlert(`Inventory merge successful!\nUpdated: ${updated} items\nInserted: ${inserted} new items`, 'Inventory Merged');
   };
 
@@ -1535,7 +1776,7 @@ export default function App() {
     link.click();
   };
 
-  // Restores / updates backup DB via JSON payload
+  // Restores / updates backup DB via JSON payload with schema & ID collision validation
   const handleImportBackupJSON = (inputEl: HTMLInputElement) => {
     const file = inputEl.files?.[0];
     if (!file) return;
@@ -1543,10 +1784,40 @@ export default function App() {
     const r = new FileReader();
     r.onload = async (e) => {
       try {
-        const payload = JSON.parse(e.target?.result as string);
-        if (payload && payload.products && payload.settings) {
-          await triggerSave(payload);
-          await showAlert('Backup restored successfully from JSON.', 'Restore Success');
+        const payload = JSON.parse(e.target?.result as string) as AppDatabase;
+        if (payload && Array.isArray(payload.products) && payload.settings) {
+          // Sanitize IDs across imported collections to prevent duplicate ID collisions
+          const ensureUniqueIds = <T extends { id: string }>(items: T[] | undefined): T[] => {
+            if (!Array.isArray(items)) return [];
+            const seen = new Set<string>();
+            return items.map(item => {
+              let id = item.id;
+              if (!id || seen.has(id)) {
+                id = generateId();
+                while (seen.has(id)) id = generateId();
+              }
+              seen.add(id);
+              return { ...item, id };
+            });
+          };
+
+          const sanitizedPayload: AppDatabase = {
+            ...payload,
+            products: ensureUniqueIds(payload.products),
+            sales: ensureUniqueIds(payload.sales),
+            customers: ensureUniqueIds(payload.customers),
+            suppliers: ensureUniqueIds(payload.suppliers),
+            staff: ensureUniqueIds(payload.staff),
+            expenses: ensureUniqueIds(payload.expenses),
+            purchases: ensureUniqueIds(payload.purchases),
+            estimates: ensureUniqueIds(payload.estimates),
+            deliveryChallans: ensureUniqueIds(payload.deliveryChallans),
+            creditDebitNotes: ensureUniqueIds(payload.creditDebitNotes),
+            branches: ensureUniqueIds(payload.branches),
+          };
+
+          await triggerSave(sanitizedPayload, { immediate: true });
+          await showAlert('Backup restored successfully from JSON with validated record integrity.', 'Restore Success');
         } else {
           await showAlert('Invalid ShopPOS backup JSON schema format.', 'Restore Error');
         }
@@ -2003,6 +2274,8 @@ export default function App() {
           error={loginError}
           lockoutMsg={loginLockoutMsg}
           fpReg={db.auth.fpId}
+          sessionNotice={sessionLogoutReason}
+          onClearNotice={() => setSessionLogoutReason(null)}
           onBiometricLogin={async () => {
             try {
               if (!db.auth.fpId) {
@@ -2047,18 +2320,27 @@ export default function App() {
 
       {showBiometricScanOverlay && (
         <div className="fixed inset-0 bg-slate-950/90 flex flex-col items-center justify-center z-[100000] p-4 text-white">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 max-w-sm w-full text-center space-y-6 animate-in fade-in zoom-in-95 duration-200">
-            <h3 className="text-lg font-black tracking-wide text-white uppercase select-none">Biometric Verification</h3>
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 max-w-sm w-full text-center space-y-5 animate-in fade-in zoom-in-95 duration-200">
+            <div className="space-y-1">
+              <h3 className="text-base font-black tracking-wide text-white uppercase select-none">
+                Virtual Touch Bypass
+              </h3>
+              <span className="inline-block text-[9px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-amber-950/50 text-amber-400 border border-amber-800/50 select-none">
+                ⚠️ Non-Secure Demo Mode
+              </span>
+            </div>
             
-            <div className="relative w-28 h-28 mx-auto bg-slate-950 rounded-full border-4 border-indigo-500/20 flex items-center justify-center overflow-hidden" style={{ position: 'relative', backgroundColor: '#020617' }}>
+            <div className="relative w-24 h-24 mx-auto bg-slate-950 rounded-full border-4 border-amber-500/20 flex items-center justify-center overflow-hidden" style={{ position: 'relative', backgroundColor: '#020617' }}>
               {/* Glowing scan laser line */}
-              <div className="absolute left-0 right-0 h-1 bg-indigo-500 animate-scanline shadow-[0_0_10px_#6366f1]" style={{ zIndex: 50 }} />
-              <Fingerprint className="w-16 h-16 text-indigo-400 animate-pulse stroke-[1.5]" />
+              <div className="absolute left-0 right-0 h-1 bg-amber-500 animate-scanline shadow-[0_0_10px_#f59e0b]" style={{ zIndex: 50 }} />
+              <Fingerprint className="w-14 h-14 text-amber-400 animate-pulse stroke-[1.5]" />
             </div>
 
-            <div className="space-y-1">
-              <p className="text-sm font-bold text-slate-200 select-none">Place your finger on primary scanner</p>
-              <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest animate-pulse select-none">Scanning biometric print...</p>
+            <div className="space-y-1.5">
+              <p className="text-xs font-bold text-slate-200 select-none">Simulating Quick Unlock Bypass</p>
+              <p className="text-[10px] text-slate-400 leading-relaxed select-none">
+                Hardware biometrics (WebAuthn) is not available in WebView. Logging in without verification...
+              </p>
             </div>
 
             <button
@@ -2221,11 +2503,22 @@ export default function App() {
 
           {/* Persistent global top status bar (MOBILE ONLY wide hide) */}
           <header className="md:hidden fixed top-0 left-0 right-0 max-w-md mx-auto bg-slate-950/95 backdrop-blur-md border-b border-slate-900 text-slate-200 flex justify-between items-center px-4 py-2.5 z-40 select-none rounded-b-2xl shadow-lg">
-            <div className="flex flex-col min-w-0">
-              <div className="flex items-center gap-1.5">
-                <span className="text-[11px] font-black uppercase tracking-wider text-indigo-400 truncate">
-                  ⚡ {db.settings.shopName || 'ShopPOS'}
-                </span>
+            <div className="flex items-center min-w-0">
+              {activeTab !== 'dashboard' && (
+                <button
+                  type="button"
+                  onClick={() => window.history.back()}
+                  className="mr-2 w-7 h-7 flex items-center justify-center bg-slate-900 hover:bg-slate-850 border border-slate-800 rounded-lg text-slate-300 active:scale-95 transition-all cursor-pointer shrink-0"
+                  title="Go Back"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
+              )}
+              <div className="flex flex-col min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-black uppercase tracking-wider text-indigo-400 truncate">
+                    ⚡ {db.settings.shopName || 'ShopPOS'}
+                  </span>
                 {db.staff.find(s => s.id === activeStaffId) ? (
                   <button
                     type="button"
@@ -2251,6 +2544,7 @@ export default function App() {
                 <Calendar className="w-2.5 h-2.5 text-indigo-400 flex-shrink-0" />
                 <span>{formatHeaderDate(new Date())}</span>
               </div>
+            </div>
             </div>
             <div className="flex items-center gap-1.5">
               {/* Notification button */}
@@ -2411,6 +2705,14 @@ export default function App() {
                 onSaveShopInfo={handleSaveShopInfo}
                 onChangeCredentials={handleChangeCredentials}
                 onRegisterBiometric={handleRegisterBiometric}
+                onRemoveBiometric={async () => {
+                  const updated = {
+                    ...db,
+                    auth: { ...db.auth, fpId: null, rpId: undefined }
+                  };
+                  await triggerSave(updated);
+                  await showAlert('Biometric login option removed.', 'Biometrics');
+                }}
                 onOpenSuppliers={() => setIsSuppliersOpen(true)}
                 onOpenStaff={() => setIsStaffOpen(true)}
                 onOpenLabels={() => setIsLabelsOpen(true)}
@@ -2433,9 +2735,31 @@ export default function App() {
                 lastBackupTime={lastBackupTime}
                 isDarkMode={isDarkMode}
                 onToggleDarkMode={setIsDarkMode}
+                onTestDayChangeWarning={handleTestDayChangeWarning}
               />
             )}
           </main>
+
+          {/* Day / Date Change Midnight Auto-Logout Notification Banner */}
+          {isAuthenticated && isDayChangeWarningOpen && dayChangeCountdownSecs !== null && (
+            <DayChangeLogoutBanner 
+              countdownSeconds={dayChangeCountdownSecs}
+              warningMinutes={db?.settings?.dayChangeWarningMinutes ?? 5}
+              cartItemCount={cart.length}
+              onSnooze={handleSnoozeDayChangeLogout}
+              onLogoutNow={performDayChangeLogout}
+              onSuspendCart={cart.length > 0 ? () => handleSuspendCart('Auto-saved before midnight rollover') : undefined}
+              isMinimized={isDayChangeBannerMinimized}
+              setIsMinimized={setIsDayChangeBannerMinimized}
+              isSimulatedTest={isSimulatedWarningTest}
+              onCloseTest={() => {
+                if (testCountdownTimerRef.current) clearInterval(testCountdownTimerRef.current);
+                setIsDayChangeWarningOpen(false);
+                setIsSimulatedWarningTest(false);
+                setDayChangeCountdownSecs(null);
+              }}
+            />
+          )}
 
           {/* Toast Notification alert feedback block */}
           <div id="toast" className="fixed bottom-[92px] md:bottom-6 left-1/2 -translate-x-1/2 bg-slate-900 border border-slate-800 text-white rounded-full px-5 py-2.5 text-xs font-bold transition-opacity duration-300 pointer-events-none opacity-0 select-none z-[8000]" />
@@ -3522,6 +3846,8 @@ interface LoginScreenProps {
   lockoutMsg: string;
   fpReg: string | null;
   onBiometricLogin: () => void;
+  sessionNotice?: string | null;
+  onClearNotice?: () => void;
 }
 function LoginScreen({
   userId,
@@ -3533,7 +3859,9 @@ function LoginScreen({
   error,
   lockoutMsg,
   fpReg,
-  onBiometricLogin
+  onBiometricLogin,
+  sessionNotice,
+  onClearNotice,
 }: LoginScreenProps) {
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col justify-center p-4">
@@ -3543,6 +3871,26 @@ function LoginScreen({
           <h2 className="text-xl font-bold text-slate-100 tracking-tight leading-none">ShopPOS</h2>
           <p className="text-[10px] text-slate-400 font-semibold mt-1 tracking-wider uppercase">Billing Station Login</p>
         </div>
+
+        {sessionNotice && (
+          <div className="bg-amber-950/40 text-amber-300 p-3.5 rounded-2xl text-[11px] font-semibold border border-amber-800/60 leading-relaxed flex items-start gap-2.5 mb-5 animate-in fade-in zoom-in-95 duration-200">
+            <Moon className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <span className="font-bold text-amber-200 block text-xs mb-0.5">End-of-Day Automatic Rollover</span>
+              {sessionNotice}
+            </div>
+            {onClearNotice && (
+              <button
+                type="button"
+                onClick={onClearNotice}
+                className="text-amber-400/70 hover:text-amber-200 p-0.5 rounded cursor-pointer transition-colors"
+                title="Dismiss notice"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        )}
 
         {lockoutMsg ? (
           <div className="bg-rose-950/40 text-rose-350 p-3.5 tracking-wide rounded-xl text-xs font-bold text-center border border-rose-900/60 leading-relaxed shadow-inner">
@@ -3590,14 +3938,27 @@ function LoginScreen({
             </button>
 
             {fpReg && (
-              <button
-                type="button"
-                onClick={onBiometricLogin}
-                className="w-full py-3 bg-slate-800 hover:bg-slate-755 text-indigo-300 text-[11px] font-bold uppercase rounded-xl flex items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-95 border border-indigo-950"
-              >
-                <Unlock className="w-3.5 h-3.5 stroke-[2]" />
-                Touch Scan to Unlock
-              </button>
+              <div className="space-y-1 pt-1">
+                <button
+                  type="button"
+                  onClick={onBiometricLogin}
+                  className={`w-full py-3 rounded-xl flex items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-95 text-[11px] font-bold uppercase ${
+                    fpReg === 'simulated_biometric'
+                      ? 'bg-amber-950/25 hover:bg-amber-950/40 text-amber-300 border border-amber-900/50'
+                      : 'bg-slate-800 hover:bg-slate-755 text-indigo-300 border border-indigo-950'
+                  }`}
+                >
+                  <Unlock className="w-3.5 h-3.5 stroke-[2]" />
+                  {fpReg === 'simulated_biometric'
+                    ? 'Touch Bypass (Non-Secure Demo)'
+                    : 'Biometric Unlock'}
+                </button>
+                {fpReg === 'simulated_biometric' && (
+                  <p className="text-[9px] text-center text-amber-400/80 font-medium">
+                    ⚠️ Simulated in WebView — No hardware verification
+                  </p>
+                )}
+              </div>
             )}
           </form>
         )}

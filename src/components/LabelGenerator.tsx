@@ -8,6 +8,7 @@ import JsBarcode from 'jsbarcode';
 import { Printer, X, Tag, Sparkles, Plus, Trash } from 'lucide-react';
 import { Product } from '../types';
 import { formatCurrency, formatDate } from '../utils';
+import { useDialog } from '../context/DialogContext';
 
 interface LabelGeneratorProps {
   products: Product[];
@@ -115,6 +116,7 @@ export const LabelGenerator: React.FC<LabelGeneratorProps> = ({
   initialProductId = null,
   onQuickUpdateBarcode,
 }) => {
+  const { showAlert } = useDialog();
   const [selectedProductId, setSelectedProductId] = React.useState<string>(initialProductId || '');
   const [printQty, setPrintQty] = React.useState<number>(12);
   const [size, setSize] = React.useState<'sm' | 'md' | 'lg'>('md');
@@ -184,7 +186,7 @@ export const LabelGenerator: React.FC<LabelGeneratorProps> = ({
     if (!prod) return;
     
     if (!prod.barcode) {
-      alert("This product has no Barcode SKU. Please assign a barcode before adding to the print queue.");
+      showAlert("This product has no Barcode SKU. Please assign a barcode before adding to the print queue.", "Missing Barcode");
       return;
     }
 

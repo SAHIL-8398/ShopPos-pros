@@ -36,9 +36,26 @@ export function formatHeaderDate(date: Date): string {
   return `${weekday}, ${formatDate(date)}`;
 }
 
-// Generate secure simple alphanumeric unique IDs
+// Generate collision-proof RFC4122 v4 UUIDs
 export function generateId(): string {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    // Set UUID v4 variant & version bits
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+  // Fallback with high-entropy timestamp, performance counter, and random values
+  const timestamp = Date.now().toString(36);
+  const perf = typeof performance !== 'undefined' ? Math.floor(performance.now() * 1000).toString(36) : '';
+  const rand1 = Math.random().toString(36).slice(2, 10);
+  const rand2 = Math.random().toString(36).slice(2, 10);
+  return `id_${timestamp}_${perf}_${rand1}${rand2}`;
 }
 
 // Get the current local date in YYYY-MM-DD format
