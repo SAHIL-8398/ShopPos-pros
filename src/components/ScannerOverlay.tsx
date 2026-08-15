@@ -4,8 +4,10 @@
  */
 
 import React, { useRef, useEffect, useState } from 'react';
-import { Camera, X, Play, Zap, HelpCircle, SwitchCamera, RefreshCw, AlertTriangle, Upload, CheckCircle2 } from 'lucide-react';
+import { Camera, X, Play, Zap, HelpCircle, SwitchCamera, RefreshCw, Upload, CheckCircle2 } from 'lucide-react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats, CameraDevice } from 'html5-qrcode';
+import { Capacitor } from '@capacitor/core';
+import { BarcodeScanner, BarcodeFormat, LensFacing } from '@capacitor-mlkit/barcode-scanning';
 import { Product, Sale } from '../types';
 import { playBeepSound } from '../utils';
 
@@ -26,10 +28,12 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
 }) => {
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const isScannerRunningRef = useRef<boolean>(false);
+  const isNativeRef = useRef<boolean>(Capacitor.isNativePlatform());
   const lastScannedBarcodeRef = useRef<string>('');
   const lastScannedTimeRef = useRef<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [isNative, setIsNative] = useState<boolean>(Capacitor.isNativePlatform());
   const [scanStatus, setScanStatus] = useState<string>('Starting camera scanner...');
   const [hasCamera, setHasCamera] = useState<boolean>(true);
   const [cameraError, setCameraError] = useState<string>('');
@@ -48,23 +52,101 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
     continuousScanRef.current = continuousScan;
   }, [continuousScan]);
 
-  // Dual engine fallback list: products with valid barcodes
   const barcodeProducts = products.filter(p => Boolean(p.barcode));
 
   useEffect(() => {
     let isMounted = true;
 
-    async function initCamera() {
+    async function initNativeScanner() {
       try {
-        // Small delay to ensure the DOM element exists
+        setScanStatus('Initializing native barcode scanner...');
+        
+        // 1. Check & request camera permission on native Android
+        const permStatus = await BarcodeScanner.checkPermissions();
+        if (permStatus.camera !== 'granted') {
+          const req = await BarcodeScanner.requestPermissions();
+          if (req.camera !== 'granted') {
+            if (isMounted) {
+              setHasCamera(false);
+              setCameraError('Camera permission was denied in Android settings.');
+              setScanStatus('⚠️ Camera access denied. Grant camera permissions in App Settings.');
+            }
+            return;
+          }
+        }
+
+        // 2. Check if Google Barcode Scanner MLKit module is downloaded
+        try {
+          const moduleCheck = await BarcodeScanner.isGoogleBarcodeScannerModuleAvailable();
+          if (!moduleCheck.available) {
+            setScanStatus('Downloading MLKit scanning models (first time only)...');
+            await BarcodeScanner.installGoogleBarcodeScannerModule();
+          }
+        } catch (mErr) {
+          console.warn('[MLKit] Module install check note:', mErr);
+        }
+
+        // 3. Check torch capability
+        try {
+          const torchCheck = await BarcodeScanner.isTorchAvailable();
+          if (isMounted && torchCheck.available) {
+            setTorchSupport(true);
+          }
+        } catch {}
+
+        if (!isMounted) return;
+
+        // 4. Enable transparent webview background for native camera feed preview
+        document.body.classList.add('barcode-scanner-active');
+
+        // 5. Add barcodes scanned listener
+        await BarcodeScanner.addListener('barcodesScanned', async (result) => {
+          if (!isMounted) return;
+          const barcode = result?.barcodes?.[0];
+          if (barcode && barcode.rawValue) {
+            triggerScanSuccess(barcode.rawValue);
+          }
+        });
+
+        // 6. Start scanning
+        await BarcodeScanner.startScan({
+          formats: [
+            BarcodeFormat.Ean13,
+            BarcodeFormat.Ean8,
+            BarcodeFormat.Code128,
+            BarcodeFormat.Code39,
+            BarcodeFormat.UpcA,
+            BarcodeFormat.UpcE,
+            BarcodeFormat.QrCode,
+            BarcodeFormat.Itf,
+            BarcodeFormat.Codabar,
+          ],
+          lensFacing: LensFacing.Back,
+        });
+
+        isScannerRunningRef.current = true;
+        if (isMounted) {
+          setHasCamera(true);
+          setScanStatus('🟢 Native MLKit active — align barcode in reticle');
+        }
+      } catch (nativeErr: any) {
+        console.error('[MLKit] Native scanner error:', nativeErr);
+        document.body.classList.remove('barcode-scanner-active');
+        if (isMounted) {
+          setHasCamera(false);
+          setCameraError(nativeErr?.message || 'Native camera error. You can retry or use simulator below.');
+          setScanStatus('⚠️ Native camera offline.');
+        }
+      }
+    }
+
+    async function initWebCamera() {
+      try {
         await new Promise(resolve => setTimeout(resolve, 150));
         if (!isMounted) return;
 
         const readerElem = document.getElementById('shoppos-qr-reader');
-        if (!readerElem) {
-          console.warn('Reader element not found');
-          return;
-        }
+        if (!readerElem) return;
 
         const formatsToSupport = [
           Html5QrcodeSupportedFormats.EAN_13,
@@ -84,12 +166,10 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
         });
         scannerRef.current = scanner;
 
-        // Try getting cameras list
         try {
           const devices = await Html5Qrcode.getCameras();
           if (isMounted && devices && devices.length > 0) {
             setAvailableCameras(devices);
-            // Default to back/environment camera if found, else first camera
             const backCam = devices.find(d => 
               d.label.toLowerCase().includes('back') || 
               d.label.toLowerCase().includes('rear') || 
@@ -103,9 +183,9 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
         }
 
         if (!isMounted) return;
-        await startScannerInstance(scanner);
+        await startWebScannerInstance(scanner);
       } catch (err: any) {
-        console.warn('Camera initialization error:', err);
+        console.warn('Web camera initialization error:', err);
         if (isMounted) {
           setHasCamera(false);
           setCameraError(err?.message || 'Camera permission denied or device not found.');
@@ -114,15 +194,25 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
       }
     }
 
-    initCamera();
+    if (isNativeRef.current) {
+      initNativeScanner();
+    } else {
+      initWebCamera();
+    }
 
     return () => {
       isMounted = false;
-      stopScannerInstance();
+      if (isNativeRef.current) {
+        document.body.classList.remove('barcode-scanner-active');
+        BarcodeScanner.removeAllListeners();
+        BarcodeScanner.stopScan().catch(() => {});
+      } else {
+        stopWebScannerInstance();
+      }
     };
   }, []);
 
-  const startScannerInstance = async (scanner: Html5Qrcode, cameraId?: string) => {
+  const startWebScannerInstance = async (scanner: Html5Qrcode, cameraId?: string) => {
     try {
       setScanStatus('Requesting video feed...');
       setCameraError('');
@@ -148,16 +238,13 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
         (decodedText: string) => {
           triggerScanSuccess(decodedText);
         },
-        () => {
-          // Frame processed, no code found in this tick (normal)
-        }
+        () => {}
       );
 
       isScannerRunningRef.current = true;
       setHasCamera(true);
       setScanStatus('🟢 Align barcode or QR inside reticle');
 
-      // Check for torch capability if supported
       try {
         const capabilities = (scanner as any).getRunningTrackCapabilities?.();
         if (capabilities && capabilities.torch) {
@@ -167,7 +254,6 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
     } catch (startErr: any) {
       console.warn('Failed to start with primary camera constraint, retrying user facing mode:', startErr);
       try {
-        // Fallback to generic user camera
         await scanner.start(
           { facingMode: 'user' },
           {
@@ -191,7 +277,7 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
     }
   };
 
-  const stopScannerInstance = async () => {
+  const stopWebScannerInstance = async () => {
     if (scannerRef.current && isScannerRunningRef.current) {
       try {
         await scannerRef.current.stop();
@@ -203,25 +289,88 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
   };
 
   const handleSwitchCamera = async () => {
+    if (isNativeRef.current) {
+      // Toggle native camera lens facing if available
+      try {
+        await BarcodeScanner.stopScan();
+        await BarcodeScanner.startScan({
+          formats: [
+            BarcodeFormat.Ean13,
+            BarcodeFormat.Ean8,
+            BarcodeFormat.Code128,
+            BarcodeFormat.Code39,
+            BarcodeFormat.UpcA,
+            BarcodeFormat.UpcE,
+            BarcodeFormat.QrCode,
+            BarcodeFormat.Itf,
+            BarcodeFormat.Codabar,
+          ],
+          lensFacing: LensFacing.Front,
+        });
+      } catch (e) {
+        console.warn('Lens switch failed:', e);
+      }
+      return;
+    }
+
     if (availableCameras.length <= 1 || !scannerRef.current) return;
     const currentIndex = availableCameras.findIndex(c => c.id === selectedCameraId);
     const nextIndex = (currentIndex + 1) % availableCameras.length;
     const nextCamera = availableCameras[nextIndex];
     setSelectedCameraId(nextCamera.id);
 
-    await stopScannerInstance();
-    await startScannerInstance(scannerRef.current, nextCamera.id);
+    await stopWebScannerInstance();
+    await startWebScannerInstance(scannerRef.current, nextCamera.id);
   };
 
   const handleRetryCamera = async () => {
+    if (isNativeRef.current) {
+      try {
+        const req = await BarcodeScanner.requestPermissions();
+        if (req.camera === 'granted') {
+          document.body.classList.add('barcode-scanner-active');
+          await BarcodeScanner.startScan({
+            formats: [
+              BarcodeFormat.Ean13,
+              BarcodeFormat.Ean8,
+              BarcodeFormat.Code128,
+              BarcodeFormat.Code39,
+              BarcodeFormat.UpcA,
+              BarcodeFormat.UpcE,
+              BarcodeFormat.QrCode,
+              BarcodeFormat.Itf,
+              BarcodeFormat.Codabar,
+            ],
+            lensFacing: LensFacing.Back,
+          });
+          setHasCamera(true);
+          setScanStatus('🟢 Native MLKit active — align barcode in reticle');
+        }
+      } catch (e: any) {
+        setCameraError(e.message || 'Retry failed.');
+      }
+      return;
+    }
+
     if (!scannerRef.current) {
       scannerRef.current = new Html5Qrcode('shoppos-qr-reader');
     }
-    await stopScannerInstance();
-    await startScannerInstance(scannerRef.current, selectedCameraId || undefined);
+    await stopWebScannerInstance();
+    await startWebScannerInstance(scannerRef.current, selectedCameraId || undefined);
   };
 
   const toggleTorch = async () => {
+    if (isNativeRef.current) {
+      try {
+        await BarcodeScanner.toggleTorch();
+        const enabled = await BarcodeScanner.isTorchEnabled();
+        setTorchOn(enabled.enabled);
+      } catch (e) {
+        console.warn('Native torch toggle error:', e);
+      }
+      return;
+    }
+
     if (!scannerRef.current || !isScannerRunningRef.current) return;
     try {
       const next = !torchOn;
@@ -240,7 +389,6 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
 
     const now = Date.now();
     if (barcode === lastScannedBarcodeRef.current && now - lastScannedTimeRef.current < 1800) {
-      // Prevent immediate double-firing of identical barcode
       return;
     }
     lastScannedBarcodeRef.current = barcode;
@@ -259,115 +407,147 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
     const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     setRecentScans(prev => [{ barcode, name, timestamp }, ...prev].slice(0, 5));
 
-    // Play tactile sound
-    const isValid = mode === 'prod' || !!matchedProd || mode === 'return_bill';
-    if (isValid) {
-      playBeepSound('success');
-    } else {
-      playBeepSound('error');
-    }
+    playBeepSound('success');
 
+    // Notify parent
     onScan(barcode, continuousScanRef.current);
-  };
 
-  const handleManualSubmit = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const data = new FormData(e.currentTarget);
-    const code = String(data.get('manual_code') || '').trim();
-    if (code) {
-      triggerScanSuccess(code);
-      const input = e.currentTarget.querySelector('input[name="manual_code"]') as HTMLInputElement;
-      if (input) input.value = '';
+    if (!continuousScanRef.current) {
+      handleClose();
     }
   };
 
   const handleFileUploadScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !scannerRef.current) return;
+    if (!file) return;
+
     try {
-      setScanStatus('Processing image barcode...');
-      const decodedResult = await scannerRef.current.scanFile(file, true);
-      if (decodedResult) {
-        triggerScanSuccess(decodedResult);
+      setScanStatus('Analyzing uploaded image for barcode...');
+      let tempScanner = scannerRef.current;
+      if (!tempScanner) {
+        tempScanner = new Html5Qrcode('shoppos-qr-reader');
       }
-    } catch (fileScanErr: any) {
-      console.warn('File scan failed:', fileScanErr);
-      setScanStatus('Could not find barcode in that image.');
-      setTimeout(() => setScanStatus('🟢 Ready to scan'), 2500);
+      const result = await tempScanner.scanFile(file, true);
+      triggerScanSuccess(result);
+    } catch (err: any) {
+      console.warn('File scan failed:', err);
+      playBeepSound('error');
+      setScanStatus('❌ No valid barcode detected in image.');
+      setTimeout(() => {
+        setScanStatus(hasCamera ? '🟢 Align barcode or QR inside reticle' : '⚠️ Camera offline. Use simulator below.');
+      }, 3000);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
-  const filteredMockProducts = barcodeProducts.filter(p => {
-    const qq = searchFilter.toLowerCase();
-    return p.name.toLowerCase().includes(qq) || p.barcode.toLowerCase().includes(qq);
-  });
+  const handleManualSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const input = form.elements.namedItem('manual_code') as HTMLInputElement;
+    if (input && input.value.trim()) {
+      triggerScanSuccess(input.value.trim());
+      input.value = '';
+    }
+  };
 
-  const filteredMockSales = sales
-    .filter(s => !s.voided)
-    .filter(s => {
-      const qq = searchFilter.toLowerCase();
-      return String(s.billNo).toLowerCase().includes(qq) || (s.customer || '').toLowerCase().includes(qq);
-    });
+  const handleClose = () => {
+    if (isNativeRef.current) {
+      document.body.classList.remove('barcode-scanner-active');
+      BarcodeScanner.removeAllListeners();
+      BarcodeScanner.stopScan().catch(() => {});
+    } else {
+      stopWebScannerInstance();
+    }
+    onClose();
+  };
+
+  const filteredMockProducts = barcodeProducts.filter(p => 
+    p.name.toLowerCase().includes(searchFilter.toLowerCase()) || 
+    p.barcode.toLowerCase().includes(searchFilter.toLowerCase())
+  );
+
+  const filteredMockSales = sales.filter(s =>
+    String(s.billNo).toLowerCase().includes(searchFilter.toLowerCase()) ||
+    (s.customer && s.customer.toLowerCase().includes(searchFilter.toLowerCase()))
+  );
 
   return (
-    <div className="fixed inset-0 bg-slate-950 z-[9999] flex flex-col justify-between select-none animate-fade-in">
-      {/* Target scanning line flash element */}
-      <div id="scan-flash" className="absolute inset-0 bg-emerald-400 opacity-0 transition-opacity duration-150 pointer-events-none z-[50]" />
+    <div className={`fixed inset-0 z-[9000] flex flex-col ${isNative ? 'bg-transparent' : 'bg-black'} select-none`}>
+      {/* Visual Flash effect overlay */}
+      <div id="scan-flash" className="absolute inset-0 bg-emerald-400 opacity-0 pointer-events-none transition-opacity duration-150 z-50" />
 
-      {/* Header Panel */}
-      <div className="p-4 pt-10 sm:pt-6 flex justify-between items-center bg-slate-900 border-b border-slate-800 text-white z-10 gap-3">
-        <div className="flex-1 min-w-0">
-          <h3 className="text-sm sm:text-base font-black flex items-center gap-2 truncate">
-            <Camera className="w-5 h-5 text-emerald-400 animate-pulse shrink-0" />
-            {mode === 'restock' ? 'Inventory Intake Scan' : mode === 'prod' ? 'Attach Product Barcode' : mode === 'return_bill' ? 'Scan Bill Return Barcode' : 'Checkout Billing Scanner'}
-          </h3>
-          <p className="text-[11px] text-slate-400 mt-0.5 truncate">
-            {mode === 'restock' ? 'Restocking inventory units' : mode === 'return_bill' ? 'Scan invoice barcode on bill' : mode === 'prod' ? 'Scan barcode to assign to this product' : 'Point camera at product barcode'}
-          </p>
+      {/* Header Bar */}
+      <div className="bg-slate-900/95 backdrop-blur-md px-4 py-3.5 flex items-center justify-between z-20 border-b border-slate-800">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+            <Camera className="w-4 h-4" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-white font-extrabold text-sm tracking-wide">
+                {mode === 'return_bill' 
+                  ? 'Scan Bill QR / Barcode' 
+                  : mode === 'restock' 
+                  ? 'Quick Restock Scanner' 
+                  : 'Fast Item Scanner'}
+              </h3>
+              {isNative && (
+                <span className="text-[9px] font-black uppercase bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 px-2 py-0.5 rounded-md">
+                  Native MLKit
+                </span>
+              )}
+            </div>
+            <p className="text-[10px] text-slate-400 font-medium">
+              {mode === 'return_bill' 
+                ? 'Scan printed receipt barcode or QR code to load invoice items' 
+                : 'Scans EAN-13, EAN-8, Code-128, UPC, and standard QR codes'}
+            </p>
+          </div>
         </div>
 
-        {/* Continuous Scan Toggle */}
-        {(mode === 'bill' || mode === 'restock') && (
+        <div className="flex items-center gap-2">
+          {/* Continuous scanning mode toggle */}
+          {(mode === 'bill' || mode === 'restock') && (
+            <label className="flex items-center gap-1.5 bg-slate-800/80 hover:bg-slate-800 px-2.5 py-1.5 rounded-xl border border-slate-700/60 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={continuousScan}
+                onChange={(e) => setContinuousScan(e.target.checked)}
+                className="w-3.5 h-3.5 accent-indigo-500 rounded cursor-pointer"
+              />
+              <span className="text-[10px] font-bold text-slate-300">Continuous</span>
+            </label>
+          )}
+
+          {availableCameras.length > 1 && !isNative && (
+            <button
+              type="button"
+              onClick={handleSwitchCamera}
+              className="w-9 h-9 rounded-full bg-slate-800 hover:bg-slate-750 flex items-center justify-center text-white active:scale-95 transition-transform shrink-0 border border-slate-700 cursor-pointer"
+              title="Switch Camera"
+            >
+              <SwitchCamera className="w-4 h-4" />
+            </button>
+          )}
+
           <button
             type="button"
-            onClick={() => setContinuousScan(!continuousScan)}
-            className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer shrink-0 border select-none ${
-              continuousScan
-                ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 shadow-sm shadow-emerald-500/10'
-                : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-300'
-            }`}
+            onClick={handleClose}
+            className="w-9 h-9 rounded-full bg-slate-800 hover:bg-rose-900/60 flex items-center justify-center text-white active:scale-95 transition-transform shrink-0 border border-slate-700 cursor-pointer"
+            title="Close Scanner"
           >
-            <span className={`w-1.5 h-1.5 rounded-full ${continuousScan ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
-            Continuous: {continuousScan ? 'ON' : 'OFF'}
+            <X className="w-5 h-5" />
           </button>
-        )}
-
-        {/* Switch camera button if multiple exist */}
-        {availableCameras.length > 1 && (
-          <button
-            type="button"
-            onClick={handleSwitchCamera}
-            className="w-9 h-9 rounded-full bg-slate-800 hover:bg-slate-750 flex items-center justify-center text-white active:scale-95 transition-transform shrink-0 border border-slate-700"
-            title="Switch Camera"
-          >
-            <SwitchCamera className="w-4 h-4" />
-          </button>
-        )}
-
-        <button
-          type="button"
-          onClick={onClose}
-          className="w-9 h-9 rounded-full bg-slate-800 hover:bg-rose-900/60 flex items-center justify-center text-white active:scale-95 transition-transform shrink-0 border border-slate-700"
-          title="Close Scanner"
-        >
-          <X className="w-5 h-5" />
-        </button>
+        </div>
       </div>
 
-      {/* Camera Stage Viewport */}
-      <div className="relative flex-1 bg-black flex items-center justify-center overflow-hidden min-h-[220px]">
-        {/* Html5Qrcode video container */}
-        <div id="shoppos-qr-reader" className="w-full h-full object-cover [&_video]:w-full [&_video]:h-full [&_video]:object-cover" />
+      {/* Camera Viewport */}
+      <div className={`relative flex-1 ${isNative ? 'bg-transparent' : 'bg-black'} flex items-center justify-center overflow-hidden min-h-[220px]`}>
+        {/* Html5Qrcode video container (used on web) */}
+        {!isNative && (
+          <div id="shoppos-qr-reader" className="w-full h-full object-cover [&_video]:w-full [&_video]:h-full [&_video]:object-cover" />
+        )}
 
         {/* Laser scanning aesthetic reticle */}
         {hasCamera && (
@@ -393,7 +573,7 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
             <button
               type="button"
               onClick={toggleTorch}
-              className="pointer-events-auto w-8 h-8 rounded-full bg-slate-900/90 backdrop-blur-md flex items-center justify-center text-yellow-300 active:scale-95 transition-transform border border-slate-700 shrink-0"
+              className="pointer-events-auto w-8 h-8 rounded-full bg-slate-900/90 backdrop-blur-md flex items-center justify-center text-yellow-300 active:scale-95 transition-transform border border-slate-700 shrink-0 cursor-pointer"
               title="Toggle Flashlight"
             >
               <Zap className={`w-4 h-4 ${torchOn ? 'fill-yellow-300' : ''}`} />
@@ -422,21 +602,25 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
                 <RefreshCw className="w-3.5 h-3.5" />
                 Retry Camera
               </button>
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer border border-slate-700"
-              >
-                <Upload className="w-3.5 h-3.5" />
-                Upload Image
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleFileUploadScan}
-                className="hidden"
-              />
+              {!isNative && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer border border-slate-700"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    Upload Image
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleFileUploadScan}
+                    className="hidden"
+                  />
+                </>
+              )}
             </div>
           </div>
         )}

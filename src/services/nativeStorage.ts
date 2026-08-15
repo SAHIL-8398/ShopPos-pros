@@ -11,6 +11,7 @@ const INVOICES_DIR = `${APP_DIR_NAME}/Invoices`;
 const PRODUCT_IMAGES_DIR = `${APP_DIR_NAME}/ProductImages`;
 const QUOTATIONS_DIR = `${APP_DIR_NAME}/Quotations`;
 const CHALLANS_DIR = `${APP_DIR_NAME}/Challans`;
+const BARCODES_DIR = `${APP_DIR_NAME}/Barcodes`;
 
 export interface SaveFileResult {
   success: boolean;
@@ -27,6 +28,7 @@ export interface SaveFileResult {
  * - ShopPOS Pro/ProductImages/
  * - ShopPOS Pro/Quotations/
  * - ShopPOS Pro/Challans/
+ * - ShopPOS Pro/Barcodes/
  */
 export async function initAppStorage(): Promise<boolean> {
   if (!Capacitor.isNativePlatform()) {
@@ -40,6 +42,7 @@ export async function initAppStorage(): Promise<boolean> {
       PRODUCT_IMAGES_DIR,
       QUOTATIONS_DIR,
       CHALLANS_DIR,
+      BARCODES_DIR,
     ];
 
     for (const dir of directories) {

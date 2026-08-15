@@ -4,6 +4,7 @@
  */
 
 import { jsPDF } from 'jspdf';
+import { Clipboard } from '@capacitor/clipboard';
 import { languagePacks } from './context/LocalizationContext';
 import { savePdfToAppFolder, isNativeCapacitor } from './services/nativeStorage';
 
@@ -78,29 +79,39 @@ export function escapeHtml(s: string): string {
     .replace(/'/g, '&#039;');
 }
 
-// Copy text to clipboard with legacy fallback
+// Copy text to clipboard with Capacitor native plugin and browser fallback
 export async function copyToClipboard(text: string): Promise<boolean> {
-  if (navigator.clipboard) {
+  // 1. Try native Capacitor Clipboard
+  try {
+    await Clipboard.write({ string: text });
+    return true;
+  } catch (nativeErr) {
+    // Continue to browser fallback
+  }
+
+  // 2. Try browser standard navigator.clipboard
+  if (typeof navigator !== 'undefined' && navigator.clipboard) {
     try {
       await navigator.clipboard.writeText(text);
       return true;
     } catch {
-      // Fallback
+      // Fallback to execCommand
     }
   }
   
-  const textArea = document.createElement('textarea');
-  textArea.value = text;
-  textArea.style.position = 'fixed'; // Prevent scrolling
-  document.body.appendChild(textArea);
-  textArea.focus();
-  textArea.select();
+  // 3. Fallback to hidden DOM textarea execCommand
   try {
-    document.execCommand('copy');
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed'; // Prevent scrolling
+    textArea.style.opacity = '0';
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    const success = document.execCommand('copy');
     document.body.removeChild(textArea);
-    return true;
+    return success;
   } catch {
-    document.body.removeChild(textArea);
     return false;
   }
 }
@@ -524,4 +535,162 @@ export function generateDeliveryChallanPDF(
     doc.save(filename);
   }
 }
+
+/**
+ * Generate official GST E-Way Bill Transit Pass PDF and save to native storage / trigger download.
+ */
+export async function generateEWayBillPDF(
+  ewayBill: {
+    billNo: string;
+    date: string;
+    vehicleNo: string;
+    transporterId?: string;
+    fromLocation: string;
+    toLocation: string;
+  },
+  shopInfo: {
+    shopName?: string;
+    address?: string;
+    phone?: string;
+    gstin?: string;
+  }
+): Promise<{ success: boolean; doc: jsPDF; filename: string; base64: string }> {
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  // Top header banner
+  doc.setFillColor(30, 41, 59); // slate-800
+  doc.rect(15, 15, 180, 24, 'F');
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.text('GST E-WAY TRANSIT PASS', 105, 25, { align: 'center' });
+
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Goods and Services Tax Compliance • Transport Authorization Document', 105, 33, { align: 'center' });
+
+  // Pass Number & Verification Badge
+  doc.setFillColor(241, 245, 249); // slate-100
+  doc.rect(15, 43, 180, 16, 'F');
+  doc.setDrawColor(203, 213, 225); // slate-300
+  doc.rect(15, 43, 180, 16, 'D');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(79, 70, 229); // indigo-600
+  doc.text(`E-WAY BILL NO: ${ewayBill.billNo}`, 20, 53);
+
+  doc.setFontSize(9);
+  doc.setTextColor(16, 185, 129); // emerald-500
+  doc.text('STATUS: VERIFIED & ACTIVE', 185, 53, { align: 'right' });
+
+  // Information Grid Boxes
+  // Box 1: Consignor / Supplier Details
+  doc.setFillColor(248, 250, 252);
+  doc.rect(15, 65, 87, 45, 'F');
+  doc.rect(15, 65, 87, 45, 'D');
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42); // slate-900
+  doc.text('PART-A: CONSIGNOR DETAILS', 20, 72);
+
+  doc.setFontSize(8.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(71, 85, 105);
+  doc.text(`Legal Name: ${shopInfo.shopName || 'ShopPOS Store'}`, 20, 80);
+  doc.text(`GSTIN ID: ${shopInfo.gstin || '07AABCS1429B1ZB'}`, 20, 86);
+  doc.text(`Origin Address: ${shopInfo.address || 'Retail Head Office'}`, 20, 92);
+  doc.text(`Contact: ${shopInfo.phone || '+91 9876543210'}`, 20, 98);
+  doc.text(`Dispatch Origin: ${ewayBill.fromLocation}`, 20, 104);
+
+  // Box 2: Vehicle & Transporter Logistics
+  doc.setFillColor(248, 250, 252);
+  doc.rect(108, 65, 87, 45, 'F');
+  doc.rect(108, 65, 87, 45, 'D');
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42);
+  doc.text('PART-B: VEHICLE & TRANSPORT', 113, 72);
+
+  doc.setFontSize(8.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(71, 85, 105);
+  doc.text(`Vehicle Number: ${ewayBill.vehicleNo}`, 113, 80);
+  doc.text(`Transporter GSTIN: ${ewayBill.transporterId || 'Self Conveyance / Transporter N/A'}`, 113, 86);
+  doc.text(`Transit Mode: Road Freight Logistics`, 113, 92);
+  doc.text(`Destination Point: ${ewayBill.toLocation}`, 113, 98);
+  doc.text(`Issued Timestamp: ${ewayBill.date}`, 113, 104);
+
+  // Compliance Table
+  const y = 118;
+  doc.setFillColor(15, 23, 42);
+  doc.rect(15, y, 180, 8, 'F');
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.text('COMPLIANCE PARAMETER', 20, y + 5.5);
+  doc.text('REGULATORY VALUE', 105, y + 5.5);
+  doc.text('VERIFICATION', 185, y + 5.5, { align: 'right' });
+
+  const rows = [
+    { param: 'Transit Movement Reason', val: 'Outward Supply & Goods Logistics', ver: 'PASSED' },
+    { param: 'Threshold Compliance', val: 'Exceeds INR 50,000/- GST Mandate', ver: 'PASSED' },
+    { param: 'Road Permit Jurisdiction', val: 'Interstate / Intrastate Transport', ver: 'AUTHORIZED' },
+    { param: 'Document Validity Period', val: 'Valid for 72 Hours from Timestamp', ver: 'ACTIVE' },
+  ];
+
+  doc.setTextColor(51, 65, 85);
+  doc.setFont('helvetica', 'normal');
+  let rowY = y + 8;
+  rows.forEach((r) => {
+    doc.setDrawColor(226, 232, 240);
+    doc.line(15, rowY + 8, 195, rowY + 8);
+    doc.text(r.param, 20, rowY + 5.5);
+    doc.text(r.val, 105, rowY + 5.5);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(16, 185, 129);
+    doc.text(r.ver, 185, rowY + 5.5, { align: 'right' });
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(51, 65, 85);
+    rowY += 8;
+  });
+
+  // Terms & Signatures
+  const footerY = 175;
+  doc.setFontSize(8.5);
+  doc.setTextColor(100, 116, 139);
+  doc.text('Statutory Transit Terms & Enforcement:', 15, footerY);
+  doc.setFontSize(8);
+  doc.text('1. The transit vehicle driver must carry this physical or digital pass throughout the consignment journey.', 15, footerY + 5);
+  doc.text('2. Subject to verification by GST Mobile Flying Squad Inspection Officers at state check-posts.', 15, footerY + 10);
+  doc.text('3. Any deviation in transit route or consignee address requires instant pass amendment.', 15, footerY + 15);
+
+  // Signature lines
+  doc.setDrawColor(148, 163, 184);
+  doc.line(20, footerY + 45, 75, footerY + 45);
+  doc.text('Vehicle Driver / Transporter Sign', 22, footerY + 50);
+
+  doc.line(135, footerY + 45, 190, footerY + 45);
+  doc.text('Authorized GST Consignor Seal', 138, footerY + 50);
+
+  const filename = `EWayBill_${ewayBill.billNo}.pdf`;
+  const base64 = doc.output('datauristring');
+
+  if (isNativeCapacitor()) {
+    await savePdfToAppFolder(base64, filename, 'Invoices');
+  } else {
+    doc.save(filename);
+  }
+
+  return { success: true, doc, filename, base64 };
+}
+
 

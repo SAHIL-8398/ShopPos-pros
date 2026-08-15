@@ -6,10 +6,12 @@
 import React, { useState, useEffect } from 'react';
 import { 
   FileText, FileCheck, FileSpreadsheet, RefreshCw, Truck, Building2, Globe, Cloud, Plus, 
-  Download, ArrowRight, Trash2, Calendar, User, Search, MapPin, CheckCircle, ArrowLeftRight
+  Download, ArrowRight, Trash2, Calendar, User, Search, MapPin, CheckCircle, ArrowLeftRight,
+  Printer, Share2, FileDown, MessageCircle
 } from 'lucide-react';
 import { Customer, Product } from '../types';
-import { formatCurrency, formatDate, generateQuotationPDF } from '../utils';
+import { formatCurrency, formatDate, generateQuotationPDF, generateEWayBillPDF, copyToClipboard } from '../utils';
+import { printPdfDocument, sharePdfDocument } from '../services/printService';
 
 interface DocumentsViewProps {
   customers: Customer[];
@@ -778,12 +780,71 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
                 </div>
 
                 {ewayBillGenerated && (
-                  <button
-                    onClick={() => window.print()}
-                    className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold transition-colors"
-                  >
-                    Print E-Way Transit Pass
-                  </button>
+                  <div className="space-y-2 pt-3 border-t border-slate-800">
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const res = await generateEWayBillPDF(ewayBillGenerated, {
+                            shopName: settings.shopName,
+                            address: settings.address,
+                            phone: settings.phone,
+                            gstin: settings.gstin,
+                          });
+                          await printPdfDocument(res.base64, res.filename);
+                        }}
+                        className="py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer shadow-sm"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                        Print Pass
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const res = await generateEWayBillPDF(ewayBillGenerated, {
+                            shopName: settings.shopName,
+                            address: settings.address,
+                            phone: settings.phone,
+                            gstin: settings.gstin,
+                          });
+                          await sharePdfDocument({
+                            pdfBase64: res.base64,
+                            filename: res.filename,
+                            title: `GST E-Way Bill Pass #${ewayBillGenerated.billNo}`,
+                            text: `Attached is the official GST E-Way Transit Pass for vehicle ${ewayBillGenerated.vehicleNo}.`,
+                            subfolder: 'Invoices',
+                          });
+                        }}
+                        className="py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer shadow-sm"
+                      >
+                        <MessageCircle className="w-3.5 h-3.5" />
+                        Share Pass
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await generateEWayBillPDF(ewayBillGenerated, {
+                          shopName: settings.shopName,
+                          address: settings.address,
+                          phone: settings.phone,
+                          gstin: settings.gstin,
+                        });
+                        const notification = document.getElementById('toast');
+                        if (notification) {
+                          notification.innerText = 'E-Way Bill PDF saved to documents!';
+                          notification.style.opacity = '1';
+                          setTimeout(() => notification.style.opacity = '0', 3000);
+                        }
+                      }}
+                      className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
+                    >
+                      <FileDown className="w-3.5 h-3.5" />
+                      Save PDF to Storage
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
@@ -845,8 +906,9 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
                   https://shoppos.in/store/{settings.shopName.toLowerCase().replace(/\s+/g, '-')}
                 </span>
                 <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(`https://shoppos.in/store/${settings.shopName.toLowerCase().replace(/\s+/g, '-')}`);
+                  onClick={async () => {
+                    const link = `https://shoppos.in/store/${settings.shopName.toLowerCase().replace(/\s+/g, '-')}`;
+                    await copyToClipboard(link);
                     const notification = document.getElementById('toast');
                     if (notification) {
                       notification.innerText = 'Online Catalogue URL copied!';

@@ -6,11 +6,14 @@
 import React from 'react';
 import { jsPDF } from 'jspdf';
 import JsBarcode from 'jsbarcode';
-import { Share2, FileDown, MessageCircle, RefreshCw, X, Check, FolderCheck } from 'lucide-react';
+import { Share2, FileDown, MessageCircle, RefreshCw, X, Check, FolderCheck, Printer, Bluetooth } from 'lucide-react';
 import { Sale, Settings } from '../types';
 import { formatCurrency, copyToClipboard, formatDate } from '../utils';
 import { useDialog } from '../context/DialogContext';
 import { savePdfToAppFolder, isNativeCapacitor } from '../services/nativeStorage';
+import { printPdfDocument, sharePdfDocument } from '../services/printService';
+import { printReceiptViaBluetooth, scanAndConnectPrinter, isBluetoothAvailable, getConnectedPrinterInfo } from '../services/bluetoothPrinterService';
+import { Share } from '@capacitor/share';
 
 const getBarcodeDataURL = (text: string): string => {
   const canvas = document.createElement('canvas');
@@ -284,17 +287,25 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
   };
 
   const handleShare = async () => {
-    if (navigator.share) {
-      try {
+    try {
+      if (isNativeCapacitor()) {
+        await Share.share({
+          title: `Bill #${sale.billNo} - ${settings.shopName || 'ShopPOS'}`,
+          text: receiptText,
+          dialogTitle: 'Share Invoice Text',
+        });
+        return;
+      }
+      if (typeof navigator !== 'undefined' && navigator.share) {
         await navigator.share({
           title: `Bill #${sale.billNo} from ${settings.shopName || 'ShopPOS'}`,
           text: receiptText,
         });
-      } catch {
-        handleCopy();
+      } else {
+        await handleCopy();
       }
-    } else {
-      handleCopy();
+    } catch {
+      await handleCopy();
     }
   };
 
@@ -834,53 +845,94 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
     }
   };
 
+  const handlePrintA4System = async () => {
+    try {
+      const doc = await generateA4PDFDoc();
+      const filename = `Invoice_${sale.billNo}_A4.pdf`;
+      const base64 = doc.output('datauristring');
+      const res = await printPdfDocument(base64, filename, { name: `Invoice #${sale.billNo}` });
+      if (!res.success) {
+        showAlert(res.error || 'Failed to send print job to printer.', 'Print Error');
+      }
+    } catch (e: any) {
+      showAlert(`Print initialization failed: ${e.message}`, 'Print Error');
+    }
+  };
+
+  const handlePrintThermalSystem = async () => {
+    try {
+      const doc = await generateThermalPDFDoc(false);
+      const filename = `Receipt_${sale.billNo}_Thermal.pdf`;
+      const base64 = doc.output('datauristring');
+      const res = await printPdfDocument(base64, filename, { name: `Receipt #${sale.billNo}` });
+      if (!res.success) {
+        showAlert(res.error || 'Failed to send thermal print job.', 'Print Error');
+      }
+    } catch (e: any) {
+      showAlert(`Thermal print error: ${e.message}`, 'Print Error');
+    }
+  };
+
+  const [isBtPrinting, setIsBtPrinting] = React.useState(false);
+
+  const handleBluetoothThermalPrint = async () => {
+    setIsBtPrinting(true);
+    try {
+      // Connect if not already connected
+      const info = getConnectedPrinterInfo();
+      if (!info.connected) {
+        const conn = await scanAndConnectPrinter();
+        if (!conn.success) {
+          showAlert(conn.error || 'Failed to connect to Bluetooth printer.', 'Bluetooth Printer');
+          return;
+        }
+      }
+
+      const res = await printReceiptViaBluetooth(receiptText, { is58mm: true });
+      if (res.success) {
+        const toast = document.getElementById('toast');
+        if (toast) {
+          toast.innerText = 'Thermal receipt printed via Bluetooth!';
+          toast.style.opacity = '1';
+          setTimeout(() => { toast.style.opacity = '0'; }, 3000);
+        }
+      } else {
+        showAlert(res.error || 'Bluetooth printing failed.', 'Bluetooth Printer');
+      }
+    } catch (err: any) {
+      showAlert(`Bluetooth printer error: ${err.message || err}`, 'Bluetooth Error');
+    } finally {
+      setIsBtPrinting(false);
+    }
+  };
+
   const handleSharePDFToWhatsApp = async (pdfFormat: 'A4' | 'Thermal' = 'A4') => {
     setIsSharing(true);
     try {
       const doc = pdfFormat === 'A4' ? await generateA4PDFDoc() : await generateThermalPDFDoc(false);
       const filename = `Invoice_${sale.billNo}_${pdfFormat}.pdf`;
-      
-      // On native Capacitor, always ensure the file is saved to the app folder first
-      if (isNativeCapacitor()) {
-        const base64 = doc.output('datauristring');
-        await savePdfToAppFolder(base64, filename, 'Invoices');
-      }
+      const base64 = doc.output('datauristring');
 
-      const pdfBlob = doc.output('blob');
-      const file = new File([pdfBlob], filename, { type: 'application/pdf' });
+      const res = await sharePdfDocument({
+        pdfBase64: base64,
+        filename,
+        title: `Invoice #${sale.billNo} - ${settings.shopName || 'ShopPOS'}`,
+        text: `Attached is your invoice for Bill #${sale.billNo} from ${settings.shopName || 'ShopPOS Store'}.\nTotal: Rs.${formatCurrency(sale.total)}`,
+        subfolder: 'Invoices',
+      });
 
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({
-          files: [file],
-          title: `Invoice #${sale.billNo}`,
-          text: `Attached is your invoice for Bill #${sale.billNo} from ${settings.shopName || 'ShopPOS Store'}`,
-        });
-        setIsSharing(false);
-      } else {
-        // Safe download fallback + trigger helper modal instructions
+      if (!res.success) {
+        // Fallback for browsers
         if (!isNativeCapacitor()) {
           doc.save(filename);
         }
-        setIsSharing(false);
         setShowShareModal(true);
       }
     } catch (err: any) {
-      console.warn('PDF Web Share API failed or cancelled:', err);
+      console.warn('Share PDF failed:', err);
+      setShowShareModal(true);
+    } finally {
       setIsSharing(false);
-      // Try safe save as fallback
-      try {
-        const doc = pdfFormat === 'A4' ? await generateA4PDFDoc() : await generateThermalPDFDoc(false);
-        const filename = `Invoice_${sale.billNo}_${pdfFormat}.pdf`;
-        if (isNativeCapacitor()) {
-          const base64 = doc.output('datauristring');
-          await savePdfToAppFolder(base64, filename, 'Invoices');
-        } else {
-          doc.save(filename);
-        }
-        setShowShareModal(true);
-      } catch (e) {
-        showAlert(`Sharing failed: ${err.message || err}`, 'Share Error');
-      }
     }
   };
 
@@ -1002,68 +1054,90 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
       </div>
 
       <div className="grid grid-cols-6 gap-2 mt-4">
+        {/* Primary Action Row: Print & Share */}
         <button
           type="button"
-          onClick={handleShare}
-          className="col-span-2 flex flex-col items-center justify-center gap-1 py-2 rounded-xl text-[10px] font-extrabold bg-slate-100 hover:bg-slate-200 text-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 active:scale-[0.98] transition-transform cursor-pointer"
-          title="Share invoice text content using native menu"
+          onClick={handlePrintA4System}
+          className="col-span-3 flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-black uppercase bg-indigo-600 hover:bg-indigo-700 text-white active:scale-[0.98] transition-all cursor-pointer shadow-md tracking-wide"
+          title="Print to connected USB, WiFi, Mopria or system printer"
         >
-          <Share2 className="w-3.5 h-3.5" />
-          <span>Share</span>
+          <Printer className="w-4 h-4" />
+          Print A4 Invoice
         </button>
 
         <button
           type="button"
+          disabled={isBtPrinting}
+          onClick={handleBluetoothThermalPrint}
+          className="col-span-3 flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-black uppercase bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-800 dark:hover:bg-slate-750 active:scale-[0.98] transition-all cursor-pointer shadow-md tracking-wide border border-slate-700 disabled:opacity-50"
+          title="Print directly to 58mm / 80mm ESC/POS Bluetooth Thermal Printer"
+        >
+          <Bluetooth className="w-4 h-4 text-sky-400" />
+          {isBtPrinting ? 'Printing...' : 'BT Thermal Print'}
+        </button>
+
+        {/* Secondary Action Row: WhatsApp & Sharing */}
+        <button
+          type="button"
+          disabled={isSharing}
+          onClick={() => handleSharePDFToWhatsApp('A4')}
+          className="col-span-4 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-black uppercase bg-emerald-600 hover:bg-emerald-700 text-white active:scale-[0.98] transition-all cursor-pointer shadow-md tracking-wider disabled:opacity-50"
+          title="Generate & share professional PDF bill directly via WhatsApp"
+        >
+          <MessageCircle className="w-4 h-4" />
+          {isSharing ? 'Generating PDF...' : 'Share PDF on WhatsApp'}
+        </button>
+
+        <button
+          type="button"
+          onClick={handleShare}
+          className="col-span-2 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-[10px] font-extrabold bg-slate-100 hover:bg-slate-200 text-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 active:scale-[0.98] transition-transform cursor-pointer"
+          title="Share invoice text content using native menu"
+        >
+          <Share2 className="w-3.5 h-3.5" />
+          <span>Share Text</span>
+        </button>
+
+        {/* Download Formats Row */}
+        <button
+          type="button"
           onClick={handleDownload58mmPDF}
-          className="col-span-2 flex flex-col items-center justify-center gap-1 py-2 rounded-xl text-[10px] font-extrabold bg-slate-100 hover:bg-slate-200 text-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 active:scale-[0.98] transition-transform cursor-pointer"
+          className="col-span-2 flex flex-col items-center justify-center gap-0.5 py-2 rounded-xl text-[9px] font-extrabold bg-slate-50 hover:bg-slate-100 text-slate-700 dark:bg-slate-850 dark:hover:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-800 active:scale-[0.98] transition-transform cursor-pointer"
           title="Download compact 58mm narrow roll format PDF"
         >
-          <FileDown className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
+          <FileDown className="w-3.5 h-3.5 text-slate-500" />
           <span>58mm Roll</span>
         </button>
 
         <button
           type="button"
           onClick={handleDownloadPDF}
-          className="col-span-2 flex flex-col items-center justify-center gap-1 py-2 rounded-xl text-[10px] font-extrabold bg-slate-100 hover:bg-slate-200 text-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 active:scale-[0.98] transition-transform cursor-pointer"
+          className="col-span-2 flex flex-col items-center justify-center gap-0.5 py-2 rounded-xl text-[9px] font-extrabold bg-slate-50 hover:bg-slate-100 text-slate-700 dark:bg-slate-850 dark:hover:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-800 active:scale-[0.98] transition-transform cursor-pointer"
           title="Download simple 80mm roll format PDF"
         >
-          <FileDown className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
+          <FileDown className="w-3.5 h-3.5 text-slate-500" />
           <span>80mm Roll</span>
         </button>
 
         <button
           type="button"
           onClick={handleDownloadA4PDF}
-          className="col-span-6 flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-extrabold uppercase bg-indigo-600 hover:bg-indigo-700 text-white active:scale-[0.98] transition-all cursor-pointer shadow-md tracking-wide"
-          title="Download fully formatted professional A4-sized PDF invoice version of the transaction"
+          className="col-span-2 flex flex-col items-center justify-center gap-0.5 py-2 rounded-xl text-[9px] font-extrabold bg-slate-50 hover:bg-slate-100 text-slate-700 dark:bg-slate-850 dark:hover:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-800 active:scale-[0.98] transition-transform cursor-pointer"
+          title="Download fully formatted professional A4-sized PDF invoice version"
         >
-          <FileDown className="w-4 h-4 text-white" />
-          Download A4 PDF Invoice
+          <FileDown className="w-3.5 h-3.5 text-indigo-500" />
+          <span>Save A4 PDF</span>
         </button>
 
-        <div className="col-span-6 flex flex-col gap-2 mt-1">
-          <button
-            type="button"
-            disabled={isSharing}
-            onClick={() => handleSharePDFToWhatsApp('A4')}
-            className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-black uppercase bg-emerald-600 hover:bg-emerald-700 text-white active:scale-[0.98] transition-all cursor-pointer shadow-md tracking-wider disabled:opacity-50"
-            title="Generate & share professional PDF bill directly via WhatsApp"
-          >
-            <MessageCircle className="w-4 h-4" />
-            {isSharing ? 'Generating PDF...' : 'Share PDF Bill on WhatsApp'}
-          </button>
-
-          <button
-            type="button"
-            onClick={handleWhatsApp}
-            className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-[10px] font-bold uppercase bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 dark:bg-slate-800/40 dark:hover:bg-slate-800 dark:text-slate-350 dark:border-slate-750 active:scale-[0.98] transition-all cursor-pointer"
-            title="Send traditional text-format receipt details on WhatsApp"
-          >
-            <MessageCircle className="w-3.5 h-3.5 text-emerald-500" />
-            Send Text Invoice on WhatsApp
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={handleWhatsApp}
+          className="col-span-6 flex items-center justify-center gap-1.5 py-2 rounded-xl text-[10px] font-bold uppercase bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 dark:bg-slate-800/40 dark:hover:bg-slate-800 dark:text-slate-350 dark:border-slate-750 active:scale-[0.98] transition-all cursor-pointer"
+          title="Send traditional text-format receipt details on WhatsApp"
+        >
+          <MessageCircle className="w-3.5 h-3.5 text-emerald-500" />
+          Send Text Invoice on WhatsApp
+        </button>
 
         {showNewBillButton && onNewBill && (
           <button

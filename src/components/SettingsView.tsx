@@ -42,6 +42,7 @@ import { AppDatabase, Settings as SettingsType } from '../types';
 import { formatCurrency } from '../utils';
 import { useTranslation } from '../context/LocalizationContext';
 import { useDialog } from '../context/DialogContext';
+import { checkBiometricsAvailability, BiometricCheckResult } from '../services/biometricService';
 
 interface SettingsViewProps {
   db: AppDatabase;
@@ -145,11 +146,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [activeProfileId, setActiveProfileId] = useState<string>('default');
   const [newProfileName, setNewProfileName] = useState<string>('');
 
-  const isWebAuthnSupported = typeof window !== 'undefined' && !!window.PublicKeyCredential && typeof navigator !== 'undefined' && !!navigator.credentials;
+  const [bioInfo, setBioInfo] = useState<BiometricCheckResult>({
+    isAvailable: false,
+    isNative: false,
+    biometryType: 'Biometrics',
+    strongBiometryIsAvailable: false,
+  });
+
+  useEffect(() => {
+    checkBiometricsAvailability().then((info) => {
+      setBioInfo(info);
+    });
+  }, []);
 
   useEffect(() => {
     if (currentAuth.fpId) {
-      if (currentAuth.fpId === 'simulated_biometric') {
+      if (currentAuth.fpId === 'native_biometric' || (bioInfo.isNative && currentAuth.fpId !== 'simulated_biometric')) {
+        setBiometricStatus(`🔒 Native ${bioInfo.biometryType || 'Biometrics'} Linked (Device Hardware Lock)`);
+      } else if (currentAuth.fpId === 'simulated_biometric') {
         setBiometricStatus('⚠️ Virtual Touch Bypass Active (Non-Secure / Demo Only)');
       } else {
         setBiometricStatus('🔒 Hardware Biometric Linked (WebAuthn Platform Key)');
@@ -157,7 +171,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     } else {
       setBiometricStatus('No Biometric Keys Configured');
     }
-  }, [currentAuth.fpId]);
+  }, [currentAuth.fpId, bioInfo]);
 
   useEffect(() => {
     setShopName(currentSettings.shopName || '');
@@ -1288,9 +1302,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </div>
                   <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">Biometric & Touch Unlock</h4>
                   <p className="text-[10px] text-slate-400 dark:text-slate-505 font-medium leading-relaxed">
-                    {isWebAuthnSupported
+                    {bioInfo.isNative
+                      ? `Native ${bioInfo.biometryType || 'fingerprint / face unlock'} is supported via Android hardware sensors.`
+                      : bioInfo.isAvailable
                       ? 'Link platform biometrics (fingerprint / face recognition) for fast hardware-secured login.'
-                      : 'Hardware WebAuthn biometrics is not supported in this Android WebView environment. Touch bypass provides simulated demo unlock without cryptographic security.'}
+                      : 'Hardware WebAuthn biometrics is not supported in this browser environment. Touch bypass provides simulated demo unlock without cryptographic security.'}
                   </p>
                 </div>
 
@@ -1311,7 +1327,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       onClick={onRegisterBiometric}
                       className="w-full py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-wider rounded-xl cursor-pointer transition-all active:scale-95 shadow-sm"
                     >
-                      {currentAuth.fpId ? 'Reconfigure Credentials' : isWebAuthnSupported ? 'Setup Biometric Lock' : 'Setup Touch Bypass (Non-Secure)'}
+                      {currentAuth.fpId 
+                        ? 'Reconfigure Credentials' 
+                        : bioInfo.isNative 
+                        ? `Setup Native ${bioInfo.biometryType}` 
+                        : bioInfo.isAvailable 
+                        ? 'Setup Biometric Lock' 
+                        : 'Setup Touch Bypass (Non-Secure)'}
                     </button>
 
                     {currentAuth.fpId && onRemoveBiometric && (

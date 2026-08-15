@@ -5,10 +5,12 @@
 
 import React, { useEffect, useRef } from 'react';
 import JsBarcode from 'jsbarcode';
-import { Printer, X, Tag, Sparkles, Plus, Trash } from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import { Printer, X, Tag, Sparkles, Plus, Trash, FileDown, Loader2 } from 'lucide-react';
 import { Product } from '../types';
 import { formatCurrency, formatDate } from '../utils';
 import { useDialog } from '../context/DialogContext';
+import { savePdfToAppFolder, isNativeCapacitor } from '../services/nativeStorage';
 
 interface LabelGeneratorProps {
   products: Product[];
@@ -217,7 +219,9 @@ export const LabelGenerator: React.FC<LabelGeneratorProps> = ({
     return items;
   }, [bulkMode, queue, selectedProduct, printQty]);
 
-  const handlePrint = () => {
+  const [isGeneratingPdf, setIsGeneratingPdf] = React.useState<boolean>(false);
+
+  const handlePrint = async () => {
     const itemsToPrint: { product: Product; qty: number }[] = [];
     if (bulkMode) {
       if (queue.length === 0) return;
@@ -227,579 +231,306 @@ export const LabelGenerator: React.FC<LabelGeneratorProps> = ({
       itemsToPrint.push({ product: selectedProduct, qty: printQty });
     }
 
-    // Dimensions in milimeters for label size styles
-    const dims = {
-      sm: { w: '38mm', h: '25mm', font: '6pt' },
-      md: { w: '50mm', h: '30mm', font: '8pt' },
-      lg: { w: '70mm', h: '40mm', font: '10pt' },
-    };
-    const d = dims[size];
-
-    const getBarcodeImgHTML = (product: Product) => {
-      if (!product.barcode) {
-        return `<div style="color:red; font-weight:bold; font-size:10px;">No Barcode</div>`;
-      }
-      try {
-        const tempCanvas = document.createElement('canvas');
-        const h = layoutMode === 'single'
-          ? (size === 'sm' ? 18 : size === 'md' ? 26 : 34)
-          : A4_PRESETS[a4Preset].barcodeHeight;
-
-        const w = layoutMode === 'single'
-          ? (size === 'sm' ? 1.0 : size === 'md' ? 1.3 : 1.7)
-          : (a4Preset === '3x8' ? 1.25 : a4Preset === '4x10' ? 0.95 : 0.7);
-
-        generateBarcodeOnCanvas(tempCanvas, product.barcode, {
-          displayValue: false,
-          height: h * 3, // 3x multiplier for super crisp high-resolution printing
-          width: w * 3,   // 3x multiplier
-          margin: 0,
-        });
-        const url = tempCanvas.toDataURL('image/png');
-        return `<img src="${url}" class="barcode-svg barcode-img" style="height:${h}px; image-rendering:pixelated; object-fit:contain;" referrerpolicy="no-referrer" />`;
-      } catch (e) {
-        console.warn('Barcode render failed:', e);
-        return `<div style="color:red; font-weight:bold; font-size:10px;">Barcode Error</div>`;
-      }
-    };
-
-    let sheetsHTML = '';
-    const preset = A4_PRESETS[a4Preset];
-
-    const buildLabelHTML = (prod: Product, svgSrc: string) => {
-      let dateParts: string[] = [];
-      if (showPackingDate && packingDate) dateParts.push(`Pkg: ${formatDate(packingDate)}`);
-      if (showExpiry && prod.expiryDate) dateParts.push(`Exp: ${formatDate(prod.expiryDate)}`);
-      const dateLine = dateParts.join(' • ');
-
-      return `
-        <div class="label-box">
-          ${showShopName && shopName ? `<div class="shop-name">${shopName}</div>` : ''}
-          <div class="prod-name" title="${prod.name}">${prod.name}</div>
-          <div class="barcode-wrapper">
-            ${svgSrc}
-            <div class="barcode-text">${prod.barcode || ''}</div>
-          </div>
-          <div class="price-info">
-            ${showPrice ? `<span class="price">Rs.${formatCurrency(prod.sellPrice || prod.mrp)}</span>` : ''}
-            ${showMrp && prod.mrp !== prod.sellPrice ? `<span class="mrp">MRP Rs.${formatCurrency(prod.mrp)}</span>` : ''}
-          </div>
-          ${dateLine ? `<div class="expiry">${dateLine}</div>` : ''}
-          ${showFssai && fssai ? `<div class="fssai-num">FSSAI: ${fssai}</div>` : ''}
-        </div>
-      `;
-    };
-
-    if (layoutMode === 'single') {
-      let labelsHTML = '';
-      for (const item of itemsToPrint) {
-        const prod = item.product;
-        const svgSrc = getBarcodeImgHTML(prod);
-        for (let i = 0; i < item.qty; i++) {
-          labelsHTML += buildLabelHTML(prod, svgSrc);
-        }
-      }
-      sheetsHTML = `<div class="sheet">${labelsHTML}</div>`;
-    } else {
-      const flatLabels: Product[] = [];
-      for (const item of itemsToPrint) {
-        for (let i = 0; i < item.qty; i++) {
-          flatLabels.push(item.product);
-        }
-      }
-
-      const totalLabels = flatLabels.length;
-      const totalSlots = a4StartOffset + totalLabels;
-      const itemsPerPage = preset.cols * preset.rows;
-      const totalPages = Math.ceil(totalSlots / itemsPerPage);
-
-      for (let page = 0; page < totalPages; page++) {
-        sheetsHTML += `<div class="a4-sheet">`;
-        for (let slot = 0; slot < itemsPerPage; slot++) {
-          const slotIdx = page * itemsPerPage + slot;
-          if (slotIdx >= a4StartOffset && slotIdx < totalSlots) {
-            const labelProd = flatLabels[slotIdx - a4StartOffset];
-            const svgSrc = getBarcodeImgHTML(labelProd);
-            sheetsHTML += buildLabelHTML(labelProd, svgSrc);
-          } else {
-            sheetsHTML += `<div class="label-box empty-slot"></div>`;
-          }
-        }
-        sheetsHTML += `</div>`;
-      }
-    }
-
-    // Attempt popup printing window or inline media style injection if blocked
-    const printWindow = window.open('', '_blank', 'width=800,height=750');
-    if (!printWindow) {
-      // Bypasses popup block inside sandbox iframes by performing inline printing!
-      const styleEl = document.createElement('style');
-      styleEl.id = 'inline-barcode-print-style';
-      styleEl.innerHTML = `
-        @media print {
-          body > * {
-            display: none !important;
-          }
-          #inline-barcode-print-wrapper {
-            display: block !important;
-            background: #ffffff !important;
-            padding: 0 !important;
-            margin: 0 !important;
-          }
-          ${layoutMode === 'single' ? `
-            .sheet {
-              display: flex !important;
-              flex-wrap: wrap !important;
-              gap: 4mm !important;
-              background: #ffffff !important;
-              padding: 10mm !important;
-            }
-            .label-box {
-              width: ${d.w} !important;
-              height: ${d.h} !important;
-              border: 0.1mm solid #000000 !important;
-              padding: 2mm 1.5mm 1.5mm 1.5mm !important;
-              box-sizing: border-box !important;
-              display: inline-flex !important;
-              flex-direction: column !important;
-              justify-content: center !important;
-              align-items: center !important;
-              text-align: center !important;
-              background: #ffffff !important;
-              page-break-inside: avoid !important;
-              margin: 2mm !important;
-              overflow: hidden !important;
-            }
-          ` : `
-            @page {
-              size: A4 portrait;
-              margin: 0 !important;
-            }
-            .a4-sheet {
-              width: 210mm !important;
-              height: 297mm !important;
-              padding: ${preset.margin}mm !important;
-              box-sizing: border-box !important;
-              display: grid !important;
-              grid-template-columns: repeat(${preset.cols}, 1fr) !important;
-              grid-template-rows: repeat(${preset.rows}, 1fr) !important;
-              gap: ${preset.gap}mm !important;
-              page-break-after: always !important;
-              background: #ffffff !important;
-              overflow: hidden !important;
-            }
-            .label-box {
-              border: 0.1mm dashed #dddddd !important;
-              padding: 2mm 1mm 1.5mm 1mm !important;
-              box-sizing: border-box !important;
-              display: flex !important;
-              flex-direction: column !important;
-              justify-content: center !important;
-              align-items: center !important;
-              text-align: center !important;
-              background: #ffffff !important;
-              overflow: hidden !important;
-            }
-            .empty-slot {
-              border: none !important;
-              background: transparent !important;
-            }
-          `}
-          .shop-name {
-            font-size: ${layoutMode === 'single' ? `calc(${d.font} - 2pt)` : `calc(${preset.fontSize} - 2pt)`} !important;
-            font-weight: 800 !important;
-            text-transform: uppercase !important;
-            color: #000000 !important;
-            line-height: 1.1 !important;
-            padding: 0.5mm 0 0 0 !important;
-            margin-bottom: 0.5mm !important;
-            overflow: hidden !important;
-            text-overflow: ellipsis !important;
-            white-space: nowrap !important;
-            width: 100% !important;
-            letter-spacing: 0.2px !important;
-          }
-          .prod-name {
-            font-size: ${layoutMode === 'single' ? `calc(${d.font} - 0.5pt)` : `calc(${preset.fontSize} - 0.5pt)`} !important;
-            font-weight: 700 !important;
-            line-height: 1.15 !important;
-            padding: 0 !important;
-            margin-bottom: 0.5mm !important;
-            display: -webkit-box !important;
-            -webkit-line-clamp: 1 !important;
-            -webkit-box-orient: vertical !important;
-            overflow: hidden !important;
-            width: 100% !important;
-            color: #000000 !important;
-          }
-          .barcode-wrapper {
-            display: flex !important;
-            flex-direction: column !important;
-            align-items: center !important;
-            width: 100% !important;
-            margin-bottom: 0.5mm !important;
-          }
-          /* Prevent scaling artifacts and force pristine high-contrast fill */
-          .barcode-wrapper svg, .barcode-wrapper img {
-            display: block !important;
-            margin: 0 auto !important;
-            max-width: 92% !important;
-            height: ${layoutMode === 'single' ? (size === 'sm' ? '15' : size === 'md' ? '22' : '28') : preset.barcodeHeight}px !important;
-            image-rendering: pixelated !important;
-            image-rendering: -moz-crisp-edges !important;
-            image-rendering: crisp-edges !important;
-            object-fit: contain !important;
-            background-color: #ffffff !important;
-          }
-          .barcode-text {
-            font-size: ${layoutMode === 'single' ? `calc(${d.font} - 2.5pt)` : `calc(${preset.fontSize} - 2.5pt)`} !important;
-            font-family: monospace !important;
-            font-weight: 700 !important;
-            letter-spacing: 0.8px !important;
-            margin-top: 0.2mm !important;
-            color: #000000 !important;
-            line-height: 1 !important;
-          }
-          .price-info {
-            display: flex !important;
-            justify-content: center !important;
-            gap: 1.5mm !important;
-            align-items: baseline !important;
-            width: 100% !important;
-            margin-top: 0.3mm !important;
-            line-height: 1 !important;
-          }
-          .price {
-            font-size: ${layoutMode === 'single' ? d.font : preset.fontSize} !important;
-            font-weight: 900 !important;
-            color: #000000 !important;
-          }
-          .mrp {
-            font-size: ${layoutMode === 'single' ? `calc(${d.font} - 2pt)` : `calc(${preset.fontSize} - 2pt)`} !important;
-            text-decoration: line-through !important;
-            color: #444444 !important;
-            font-weight: 600 !important;
-          }
-          .expiry {
-            font-size: ${layoutMode === 'single' ? `calc(${d.font} - 2.5pt)` : `calc(${preset.fontSize} - 2.5pt)`} !important;
-            color: #222222 !important;
-            margin-top: 0.3mm !important;
-            font-weight: 600 !important;
-            line-height: 1.1 !important;
-            white-space: nowrap !important;
-            overflow: hidden !important;
-            text-overflow: ellipsis !important;
-            max-width: 100% !important;
-          }
-          .fssai-num {
-            font-size: ${layoutMode === 'single' ? `calc(${d.font} - 2.8pt)` : `calc(${preset.fontSize} - 2.8pt)`} !important;
-            color: #222222 !important;
-            margin-top: 0.2mm !important;
-            font-weight: 700 !important;
-            line-height: 1.1 !important;
-            white-space: nowrap !important;
-            overflow: hidden !important;
-            text-overflow: ellipsis !important;
-            max-width: 100% !important;
-          }
-          /* Strip all other backgrounds, shadows, and force exact printing */
-          * {
-            background-color: transparent !important;
-            color: #000000 !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-            color-adjust: exact !important;
-            box-shadow: none !important;
-            text-shadow: none !important;
-          }
-          html, body, #inline-barcode-print-wrapper, .sheet, .a4-sheet, .label-box {
-            background-color: #ffffff !important;
-          }
-        }
-        #inline-barcode-print-wrapper {
-          display: none;
-        }
-      `;
-      document.head.appendChild(styleEl);
-
-      const printWrapper = document.createElement('div');
-      printWrapper.id = 'inline-barcode-print-wrapper';
-      printWrapper.innerHTML = sheetsHTML;
-      document.body.appendChild(printWrapper);
-
-      // Wait for all image sources/dataURLs to load/decode in browser before printing
-      const imgs = Array.from(printWrapper.querySelectorAll('img'));
-      Promise.all(imgs.map(img => {
-        return new Promise<void>(resolve => {
-          if (img.complete) {
-            resolve();
-          } else {
-            img.onload = () => resolve();
-            img.onerror = () => resolve();
-          }
-        });
-      })).then(() => {
-        // Yield to browser execution context to fully paint the images onto the canvas/GPU
-        setTimeout(() => {
-          window.print();
-          setTimeout(() => {
-            document.getElementById('inline-barcode-print-style')?.remove();
-            document.getElementById('inline-barcode-print-wrapper')?.remove();
-          }, 1000);
-        }, 300);
-      });
+    if (itemsToPrint.length === 0) {
+      await showAlert('No products with barcodes available to print.', 'Notice');
       return;
     }
 
-    printWindow.document.write(`
-      <html>
-        <head>
-          <title>Print Labels - ${bulkMode ? 'Bulk Queue' : selectedProduct?.name}</title>
-          <style>
-            @media print {
-              .no-print { display: none !important; }
-              body { margin: 0 !important; background: #ffffff !important; }
-              * {
-                -webkit-print-color-adjust: exact !important;
-                print-color-adjust: exact !important;
-                color-adjust: exact !important;
+    setIsGeneratingPdf(true);
+
+    try {
+      // Helper to generate a barcode image PNG data URL on an in-memory canvas
+      const getBarcodeDataUrl = (barcode: string, targetH: number): string | null => {
+        if (!barcode) return null;
+        try {
+          const tempCanvas = document.createElement('canvas');
+          generateBarcodeOnCanvas(tempCanvas, barcode, {
+            displayValue: false,
+            height: Math.round(targetH * 4), // 4x multiplier for crisp high-DPI rendering
+            width: 3,
+            margin: 0,
+          });
+          return tempCanvas.toDataURL('image/png');
+        } catch (e) {
+          console.warn('Barcode generation failed for:', barcode, e);
+          return null;
+        }
+      };
+
+      const filename = `Barcode_Labels_${Date.now()}.pdf`;
+
+      if (layoutMode === 'single') {
+        // Continuous / Roll Label Mode (Custom label dimensions in mm)
+        const dims = {
+          sm: { w: 38, h: 25, titleSize: 6, nameSize: 7, barcodeH: 7.5, barcodeW: 30, priceSize: 7, dateSize: 5 },
+          md: { w: 50, h: 30, titleSize: 7, nameSize: 8.5, barcodeH: 9.5, barcodeW: 40, priceSize: 8.5, dateSize: 5.5 },
+          lg: { w: 70, h: 40, titleSize: 8.5, nameSize: 10, barcodeH: 13, barcodeW: 56, priceSize: 10.5, dateSize: 6.5 },
+        };
+        const d = dims[size];
+
+        const doc = new jsPDF({
+          orientation: 'landscape',
+          unit: 'mm',
+          format: [d.h, d.w],
+        });
+
+        // Flatten all label items
+        const flatItems: Product[] = [];
+        for (const item of itemsToPrint) {
+          for (let i = 0; i < item.qty; i++) {
+            flatItems.push(item.product);
+          }
+        }
+
+        flatItems.forEach((prod, index) => {
+          if (index > 0) {
+            doc.addPage([d.h, d.w], 'landscape');
+          }
+
+          let currY = 3;
+
+          // 1. Shop Name
+          if (showShopName && shopName) {
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(d.titleSize);
+            doc.setTextColor(30, 30, 30);
+            const shopLines = doc.splitTextToSize(shopName.toUpperCase(), d.w - 4);
+            doc.text(shopLines[0], d.w / 2, currY, { align: 'center' });
+            currY += 2.8;
+          }
+
+          // 2. Product Name
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(d.nameSize);
+          doc.setTextColor(0, 0, 0);
+          const nameLines = doc.splitTextToSize(prod.name, d.w - 4);
+          doc.text(nameLines[0], d.w / 2, currY, { align: 'center' });
+          currY += 3.2;
+
+          // 3. Barcode graphic
+          const barcodeImg = getBarcodeDataUrl(prod.barcode, d.barcodeH);
+          if (barcodeImg) {
+            const bx = (d.w - d.barcodeW) / 2;
+            doc.addImage(barcodeImg, 'PNG', bx, currY, d.barcodeW, d.barcodeH);
+            currY += d.barcodeH + 1.8;
+          }
+
+          // 4. Barcode string
+          doc.setFont('courier', 'bold');
+          doc.setFontSize(d.dateSize + 1);
+          doc.setTextColor(30, 30, 30);
+          doc.text(prod.barcode || '', d.w / 2, currY, { align: 'center' });
+          currY += 2.8;
+
+          // 5. Price & MRP
+          let priceParts: string[] = [];
+          if (showPrice) {
+            priceParts.push(`Rs.${formatCurrency(prod.sellPrice || prod.mrp)}`);
+          }
+          if (showMrp && prod.mrp && prod.mrp !== prod.sellPrice) {
+            priceParts.push(`MRP Rs.${formatCurrency(prod.mrp)}`);
+          }
+          if (priceParts.length > 0) {
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(d.priceSize);
+            doc.setTextColor(0, 0, 0);
+            doc.text(priceParts.join('  •  '), d.w / 2, currY, { align: 'center' });
+            currY += 2.8;
+          }
+
+          // 6. Dates
+          const dateParts: string[] = [];
+          if (showPackingDate && packingDate) dateParts.push(`Pkg: ${formatDate(packingDate)}`);
+          if (showExpiry && prod.expiryDate) dateParts.push(`Exp: ${formatDate(prod.expiryDate)}`);
+          if (dateParts.length > 0) {
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(d.dateSize);
+            doc.setTextColor(60, 60, 60);
+            doc.text(dateParts.join(' • '), d.w / 2, currY, { align: 'center' });
+            currY += 2.2;
+          }
+
+          // 7. FSSAI
+          if (showFssai && fssai) {
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(d.dateSize - 0.5);
+            doc.setTextColor(80, 80, 80);
+            doc.text(`FSSAI: ${fssai}`, d.w / 2, currY, { align: 'center' });
+          }
+        });
+
+        // Save PDF to native app folder or browser download
+        if (isNativeCapacitor()) {
+          const base64 = doc.output('datauristring');
+          const saveResult = await savePdfToAppFolder(base64, filename, 'Barcodes');
+          if (saveResult.success) {
+            await showAlert(`Roll Barcode Labels PDF saved successfully to:\nShopPOS Pro/Barcodes/${filename}`, 'Labels Saved');
+          } else {
+            await showAlert(`Failed to save labels PDF: ${saveResult.error}`, 'Save Error');
+          }
+        } else {
+          doc.save(filename);
+          await showAlert('Roll Barcode Labels PDF downloaded successfully!', 'PDF Generated');
+        }
+      } else {
+        // A4 Sheet Grid Layout Mode
+        const preset = A4_PRESETS[a4Preset];
+        const doc = new jsPDF({
+          orientation: 'portrait',
+          unit: 'mm',
+          format: 'a4',
+        });
+
+        const pageWidth = 210;
+        const pageHeight = 297;
+        const margin = preset.margin;
+        const cols = preset.cols;
+        const rows = preset.rows;
+        const gap = preset.gap;
+
+        // Calculate dimensions of each label cutout box
+        const cellWidth = (pageWidth - (2 * margin) - ((cols - 1) * gap)) / cols;
+        const cellHeight = (pageHeight - (2 * margin) - ((rows - 1) * gap)) / rows;
+
+        // Flatten all label items
+        const flatItems: Product[] = [];
+        for (const item of itemsToPrint) {
+          for (let i = 0; i < item.qty; i++) {
+            flatItems.push(item.product);
+          }
+        }
+
+        const totalLabels = flatItems.length;
+        const totalSlots = a4StartOffset + totalLabels;
+        const itemsPerPage = cols * rows;
+        const totalPages = Math.ceil(totalSlots / itemsPerPage);
+
+        for (let page = 0; page < totalPages; page++) {
+          if (page > 0) {
+            doc.addPage('a4', 'portrait');
+          }
+
+          for (let slot = 0; slot < itemsPerPage; slot++) {
+            const slotIdx = page * itemsPerPage + slot;
+            const col = slot % cols;
+            const row = Math.floor(slot / cols);
+
+            const x = margin + col * (cellWidth + gap);
+            const y = margin + row * (cellHeight + gap);
+
+            if (slotIdx >= a4StartOffset && slotIdx < totalSlots) {
+              const prod = flatItems[slotIdx - a4StartOffset];
+
+              // Draw subtle boundary guide
+              doc.setDrawColor(215, 215, 215);
+              doc.setLineWidth(0.15);
+              doc.setLineDashPattern([0.8, 0.8], 0);
+              doc.rect(x, y, cellWidth, cellHeight, 'S');
+              doc.setLineDashPattern([], 0);
+
+              let currY = y + (preset.cols === 3 ? 3 : preset.cols === 4 ? 2.5 : 2);
+
+              // 1. Shop Name
+              if (showShopName && shopName) {
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(preset.cols === 3 ? 7 : preset.cols === 4 ? 6 : 5);
+                doc.setTextColor(30, 30, 30);
+                const shopLines = doc.splitTextToSize(shopName.toUpperCase(), cellWidth - 2);
+                doc.text(shopLines[0], x + cellWidth / 2, currY, { align: 'center' });
+                currY += (preset.cols === 3 ? 2.8 : 2.2);
               }
-              ${layoutMode === 'a4' ? `
-                @page {
-                  size: A4 portrait;
-                  margin: 0 !important;
-                }
-              ` : ''}
-            }
-            * {
-              -webkit-print-color-adjust: exact !important;
-              print-color-adjust: exact !important;
-              color-adjust: exact !important;
-              box-sizing: border-box;
-            }
-            body {
-              font-family: -apple-system, system-ui, sans-serif;
-              background: #f1f5f9;
-              padding: 20px;
-              margin: 0;
-              color: #000000;
-            }
-            .no-print {
-              background: #0f172a;
-              color: white;
-              padding: 12px 20px;
-              border-radius: 12px;
-              display: flex;
-              gap: 10px;
-              margin-bottom: 20px;
-              align-items: center;
-              box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            }
-            .print-btn {
-              background: #10b981;
-              color: white;
-              border: none;
-              padding: 8px 16px;
-              font-weight: bold;
-              border-radius: 8px;
-              cursor: pointer;
-            }
-            .close-btn {
-              background: #475569;
-              color: white;
-              border: none;
-              padding: 8px 16px;
-              font-weight: bold;
-              border-radius: 8px;
-              cursor: pointer;
-            }
-            ${layoutMode === 'single' ? `
-              .sheet {
-                display: flex;
-                flex-wrap: wrap;
-                gap: 4mm;
-                background: white;
-                padding: 10mm;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-                border-radius: 8px;
-                width: max-content;
-                max-width: 100%;
+
+              // 2. Product Name
+              doc.setFont('helvetica', 'bold');
+              doc.setFontSize(preset.cols === 3 ? 8 : preset.cols === 4 ? 7 : 5.8);
+              doc.setTextColor(0, 0, 0);
+              const nameLines = doc.splitTextToSize(prod.name, cellWidth - 2);
+              doc.text(nameLines[0], x + cellWidth / 2, currY, { align: 'center' });
+              currY += (preset.cols === 3 ? 3.2 : 2.6);
+
+              // 3. Barcode Image
+              const barcodeH = preset.cols === 3 ? 9 : preset.cols === 4 ? 6.8 : 4.8;
+              const barcodeW = Math.min(cellWidth - 4, preset.cols === 3 ? 46 : preset.cols === 4 ? 36 : 28);
+              const barcodeImg = getBarcodeDataUrl(prod.barcode, barcodeH);
+              if (barcodeImg) {
+                const bx = x + (cellWidth - barcodeW) / 2;
+                doc.addImage(barcodeImg, 'PNG', bx, currY, barcodeW, barcodeH);
+                currY += barcodeH + 1.5;
               }
-              .label-box {
-                width: ${d.w};
-                height: ${d.h};
-                border: 0.1mm solid #000000;
-                padding: 2mm 1.5mm 1.5mm 1.5mm;
-                box-sizing: border-box;
-                display: flex;
-                flex-direction: column;
-                justify-content: center;
-                align-items: center;
-                text-align: center;
-                background: white;
-                page-break-inside: avoid;
-                color: #000000;
-                overflow: hidden;
+
+              // 4. Barcode string
+              doc.setFont('courier', 'bold');
+              doc.setFontSize(preset.cols === 3 ? 6.5 : preset.cols === 4 ? 5.2 : 4.2);
+              doc.setTextColor(30, 30, 30);
+              doc.text(prod.barcode || '', x + cellWidth / 2, currY, { align: 'center' });
+              currY += (preset.cols === 3 ? 2.6 : 2.1);
+
+              // 5. Price & MRP
+              let priceParts: string[] = [];
+              if (showPrice) {
+                priceParts.push(`Rs.${formatCurrency(prod.sellPrice || prod.mrp)}`);
               }
-            ` : `
-              .a4-sheet {
-                width: 210mm;
-                height: 297mm;
-                padding: ${preset.margin}mm;
-                display: grid;
-                grid-template-columns: repeat(${preset.cols}, 1fr);
-                grid-template-rows: repeat(${preset.rows}, 1fr);
-                gap: ${preset.gap}mm;
-                page-break-after: always;
-                background: white;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-                margin: 0 auto 20px auto;
+              if (showMrp && prod.mrp && prod.mrp !== prod.sellPrice) {
+                priceParts.push(`MRP Rs.${formatCurrency(prod.mrp)}`);
               }
-              .label-box {
-                border: 0.1mm dashed #dddddd;
-                padding: 2mm 1mm 1.5mm 1mm;
-                box-sizing: border-box;
-                display: flex;
-                flex-direction: column;
-                justify-content: center;
-                align-items: center;
-                text-align: center;
-                background: white;
-                overflow: hidden;
+              if (priceParts.length > 0) {
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(preset.cols === 3 ? 7.5 : preset.cols === 4 ? 6.5 : 5.2);
+                doc.setTextColor(0, 0, 0);
+                doc.text(priceParts.join('  •  '), x + cellWidth / 2, currY, { align: 'center' });
+                currY += (preset.cols === 3 ? 2.5 : 2);
               }
-              .empty-slot {
-                border: none !important;
-                background: transparent !important;
+
+              // 6. Dates
+              const dateParts: string[] = [];
+              if (showPackingDate && packingDate) dateParts.push(`Pkg: ${formatDate(packingDate)}`);
+              if (showExpiry && prod.expiryDate) dateParts.push(`Exp: ${formatDate(prod.expiryDate)}`);
+              if (dateParts.length > 0) {
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(preset.cols === 3 ? 5.5 : preset.cols === 4 ? 4.5 : 3.8);
+                doc.setTextColor(60, 60, 60);
+                doc.text(dateParts.join(' • '), x + cellWidth / 2, currY, { align: 'center' });
+                currY += 1.8;
               }
-            `}
-            .shop-name {
-              font-size: ${layoutMode === 'single' ? `calc(${d.font} - 2pt)` : `calc(${preset.fontSize} - 2pt)`};
-              font-weight: 800;
-              text-transform: uppercase;
-              color: #000000;
-              line-height: 1.1;
-              padding: 0.5mm 0 0 0;
-              margin-bottom: 0.5mm;
-              overflow: hidden;
-              text-overflow: ellipsis;
-              white-space: nowrap;
-              width: 100%;
-              letter-spacing: 0.2px;
+
+              // 7. FSSAI
+              if (showFssai && fssai) {
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(preset.cols === 3 ? 5 : preset.cols === 4 ? 4 : 3.5);
+                doc.setTextColor(80, 80, 80);
+                doc.text(`FSSAI: ${fssai}`, x + cellWidth / 2, currY, { align: 'center' });
+              }
+            } else {
+              // Empty slot helper outline
+              doc.setDrawColor(240, 240, 240);
+              doc.setLineWidth(0.1);
+              doc.setLineDashPattern([0.5, 0.5], 0);
+              doc.rect(x, y, cellWidth, cellHeight, 'S');
+              doc.setLineDashPattern([], 0);
             }
-            .prod-name {
-              font-size: ${layoutMode === 'single' ? `calc(${d.font} - 0.5pt)` : `calc(${preset.fontSize} - 0.5pt)`};
-              font-weight: 700;
-              line-height: 1.15;
-              padding: 0;
-              margin-bottom: 0.5mm;
-              display: -webkit-box;
-              -webkit-line-clamp: 1;
-              -webkit-box-orient: vertical;
-              overflow: hidden;
-              width: 100%;
-              color: #000000;
-            }
-            .barcode-wrapper {
-              display: flex;
-              flex-direction: column;
-              align-items: center;
-              width: 100%;
-              margin-bottom: 0.5mm;
-            }
-            .barcode-wrapper svg, .barcode-wrapper img {
-              display: block !important;
-              margin: 0 auto !important;
-              max-width: 92% !important;
-              height: ${layoutMode === 'single' ? (size === 'sm' ? '15' : size === 'md' ? '22' : '28') : preset.barcodeHeight}px !important;
-              image-rendering: pixelated !important;
-              image-rendering: -moz-crisp-edges !important;
-              image-rendering: crisp-edges !important;
-              object-fit: contain !important;
-              background-color: #ffffff !important;
-            }
-            .barcode-text {
-              font-size: ${layoutMode === 'single' ? `calc(${d.font} - 2.5pt)` : `calc(${preset.fontSize} - 2.5pt)`};
-              font-family: monospace;
-              font-weight: 700;
-              letter-spacing: 0.8px;
-              margin-top: 0.2mm;
-              color: #000000;
-              line-height: 1;
-            }
-            .price-info {
-              display: flex;
-              justify-content: center;
-              gap: 1.5mm;
-              align-items: baseline;
-              width: 100%;
-              margin-top: 0.3mm;
-              line-height: 1;
-            }
-            .price {
-              font-size: ${layoutMode === 'single' ? d.font : preset.fontSize};
-              font-weight: 900;
-              color: #000000;
-            }
-            .mrp {
-              font-size: ${layoutMode === 'single' ? `calc(${d.font} - 2pt)` : `calc(${preset.fontSize} - 2pt)`};
-              text-decoration: line-through;
-              color: #444444;
-              font-weight: 600;
-            }
-            .expiry {
-              font-size: ${layoutMode === 'single' ? `calc(${d.font} - 2.5pt)` : `calc(${preset.fontSize} - 2.5pt)`};
-              color: #222222;
-              margin-top: 0.3mm;
-              font-weight: 600;
-              line-height: 1.1;
-              white-space: nowrap;
-              overflow: hidden;
-              text-overflow: ellipsis;
-              max-width: 100%;
-            }
-            .fssai-num {
-              font-size: ${layoutMode === 'single' ? `calc(${d.font} - 2.8pt)` : `calc(${preset.fontSize} - 2.8pt)`};
-              color: #222222;
-              margin-top: 0.2mm;
-              font-weight: 700;
-              line-height: 1.1;
-              white-space: nowrap;
-              overflow: hidden;
-              text-overflow: ellipsis;
-              max-width: 100%;
-            }
-          </style>
-        </head>
-        <body>
-          <div class="no-print">
-            <strong>Sticker Labels Printable Sheet Ready</strong>
-            <button class="print-btn" onclick="window.print()">🖨️ Print to PDF / Label Printer</button>
-            <button class="close-btn" onclick="window.close()">Close Window</button>
-          </div>
-          ${sheetsHTML}
-          <script>
-            window.addEventListener('load', () => {
-              const imgs = Array.from(document.querySelectorAll('img'));
-              Promise.all(imgs.map(img => {
-                return new Promise(resolve => {
-                  if (img.complete) {
-                     resolve();
-                  } else {
-                     img.onload = () => resolve();
-                     img.onerror = () => resolve();
-                  }
-                });
-              })).then(() => {
-                setTimeout(() => {
-                  window.print();
-                }, 350);
-              });
-            });
-          </script>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
+          }
+        }
+
+        // Save PDF to native app folder or browser download
+        if (isNativeCapacitor()) {
+          const base64 = doc.output('datauristring');
+          const saveResult = await savePdfToAppFolder(base64, filename, 'Barcodes');
+          if (saveResult.success) {
+            await showAlert(`A4 Barcode Labels PDF saved successfully to:\nShopPOS Pro/Barcodes/${filename}`, 'Labels Sheet Saved');
+          } else {
+            await showAlert(`Failed to save labels PDF: ${saveResult.error}`, 'Save Error');
+          }
+        } else {
+          doc.save(filename);
+          await showAlert('A4 Barcode Labels PDF downloaded successfully!', 'PDF Generated');
+        }
+      }
+    } catch (err: any) {
+      console.error('Labels PDF generation error:', err);
+      await showAlert(`Failed to generate labels PDF: ${err.message || err}`, 'PDF Error');
+    } finally {
+      setIsGeneratingPdf(false);
+    }
   };
 
   return (
@@ -1435,17 +1166,26 @@ export const LabelGenerator: React.FC<LabelGeneratorProps> = ({
 
             <button
               type="button"
-              disabled={bulkMode ? queue.length === 0 : !selectedProduct?.barcode}
+              disabled={isGeneratingPdf || (bulkMode ? queue.length === 0 : !selectedProduct?.barcode)}
               onClick={handlePrint}
               className="w-full flex items-center justify-center gap-2 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 dark:disabled:bg-slate-800 dark:disabled:text-slate-600 disabled:cursor-not-allowed text-white font-extrabold text-sm rounded-xl transition-all shadow-md active:scale-[0.98] select-none cursor-pointer"
             >
-              <Printer className="w-4 h-4" />
-              {bulkMode ? (
-                `Print Queue Labels (${queue.reduce((acc, i) => acc + i.qty, 0)} total)`
+              {isGeneratingPdf ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Generating PDF...
+                </>
               ) : (
-                layoutMode === 'single' 
-                  ? `Print Roll Labels (${printQty} count)` 
-                  : `Generate Printable A4 Sheet PDF`
+                <>
+                  <Printer className="w-4 h-4" />
+                  {bulkMode ? (
+                    `Print Queue Labels (${queue.reduce((acc, i) => acc + i.qty, 0)} total)`
+                  ) : (
+                    layoutMode === 'single' 
+                      ? `Print Roll Labels (${printQty} count)` 
+                      : `Generate Printable A4 Sheet PDF`
+                  )}
+                </>
               )}
             </button>
           </>

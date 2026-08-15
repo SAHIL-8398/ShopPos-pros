@@ -45,6 +45,9 @@ import {
 import { generateId, getTodayDateString, formatCurrency, playBeepSound, computePredictiveAlerts, translate, formatDate, formatHeaderDate } from './utils';
 import { LocalizationProvider } from './context/LocalizationContext';
 import { initAppStorage } from './services/nativeStorage';
+import { checkBiometricsAvailability, authenticateWithNativeBiometrics } from './services/biometricService';
+import { Capacitor } from '@capacitor/core';
+import { App as CapacitorApp } from '@capacitor/app';
 
 // Extracted Sub-Views
 import { DashboardView } from './components/DashboardView';
@@ -511,6 +514,167 @@ export default function App() {
     window.addEventListener('popstate', handlePopState);
     return () => {
       window.removeEventListener('popstate', handlePopState);
+    };
+  }, []);
+
+  // Track latest UI state for native Android hardware back button handler
+  const lastBackPressTimeRef = useRef<number>(0);
+  const uiStateRef = useRef({
+    showBiometricScanOverlay,
+    isScannerOpen,
+    isReceiptOpen,
+    isCheckoutOpen,
+    isProductModalOpen,
+    isCustomerModalOpen,
+    isSuppliersOpen,
+    isStaffOpen,
+    isLabelsOpen,
+    isExpensesOpen,
+    isHistoryOpen,
+    isAlertsOpen,
+    isCalculatorOpen,
+    isUpiQrOpen,
+    activeBillDetailsId,
+    dayDetailsDate,
+    returnBillId,
+    activeTab,
+  });
+
+  useEffect(() => {
+    uiStateRef.current = {
+      showBiometricScanOverlay,
+      isScannerOpen,
+      isReceiptOpen,
+      isCheckoutOpen,
+      isProductModalOpen,
+      isCustomerModalOpen,
+      isSuppliersOpen,
+      isStaffOpen,
+      isLabelsOpen,
+      isExpensesOpen,
+      isHistoryOpen,
+      isAlertsOpen,
+      isCalculatorOpen,
+      isUpiQrOpen,
+      activeBillDetailsId,
+      dayDetailsDate,
+      returnBillId,
+      activeTab,
+    };
+  });
+
+  // Native Android hardware/gesture back button listener
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    let listenerHandle: any = null;
+
+    const registerBackButton = async () => {
+      listenerHandle = await CapacitorApp.addListener('backButton', () => {
+        const s = uiStateRef.current;
+
+        // 1. Close active modals / overlays in reverse depth
+        if (s.showBiometricScanOverlay) {
+          setShowBiometricScanOverlay(false);
+          return;
+        }
+        if (s.isScannerOpen) {
+          setIsScannerOpen(false);
+          return;
+        }
+        if (s.isReceiptOpen) {
+          setIsReceiptOpen(false);
+          return;
+        }
+        if (s.isCheckoutOpen) {
+          setIsCheckoutOpen(false);
+          return;
+        }
+        if (s.isProductModalOpen) {
+          setIsProductModalOpen(false);
+          setActiveProductId(null);
+          return;
+        }
+        if (s.isCustomerModalOpen) {
+          setIsCustomerModalOpen(false);
+          setActiveCustomerId(null);
+          return;
+        }
+        if (s.isSuppliersOpen) {
+          setIsSuppliersOpen(false);
+          return;
+        }
+        if (s.isStaffOpen) {
+          setIsStaffOpen(false);
+          return;
+        }
+        if (s.isLabelsOpen) {
+          setIsLabelsOpen(false);
+          return;
+        }
+        if (s.isExpensesOpen) {
+          setIsExpensesOpen(false);
+          return;
+        }
+        if (s.isHistoryOpen) {
+          setIsHistoryOpen(false);
+          return;
+        }
+        if (s.isAlertsOpen) {
+          setIsAlertsOpen(false);
+          return;
+        }
+        if (s.isCalculatorOpen) {
+          setIsCalculatorOpen(false);
+          return;
+        }
+        if (s.isUpiQrOpen) {
+          setIsUpiQrOpen(false);
+          return;
+        }
+        if (s.activeBillDetailsId) {
+          setActiveBillDetailsId(null);
+          return;
+        }
+        if (s.dayDetailsDate) {
+          setDayDetailsDate(null);
+          return;
+        }
+        if (s.returnBillId) {
+          setReturnBillId(null);
+          return;
+        }
+
+        // 2. Return to Dashboard tab if inside another secondary tab
+        if (s.activeTab !== 'dashboard') {
+          setActiveTab('dashboard');
+          return;
+        }
+
+        // 3. Double-tap to exit on main Dashboard
+        const now = Date.now();
+        if (now - lastBackPressTimeRef.current < 2000) {
+          CapacitorApp.exitApp();
+        } else {
+          lastBackPressTimeRef.current = now;
+          const toast = document.getElementById('toast');
+          if (toast) {
+            toast.innerText = 'Press back again to exit ShopPOS Pro';
+            toast.style.opacity = '1';
+            setTimeout(() => {
+              toast.style.opacity = '0';
+            }, 2000);
+          }
+        }
+      });
+    };
+
+    registerBackButton();
+
+    return () => {
+      if (listenerHandle) {
+        listenerHandle.remove();
+      }
     };
   }, []);
 
@@ -1268,13 +1432,40 @@ export default function App() {
 
   const handleRegisterBiometric = async () => {
     try {
+      const bioInfo = await checkBiometricsAvailability();
+
+      // Native Capacitor Biometrics Flow (Android / iOS)
+      if (bioInfo.isNative) {
+        if (!bioInfo.isAvailable) {
+          await showAlert(
+            `Native biometrics (${bioInfo.biometryType}) is not available or enrolled on this device.\n\nPlease register a fingerprint, face unlock, or screen PIN in your Android Device Settings first.`,
+            'Biometrics Not Enrolled'
+          );
+          return;
+        }
+
+        const authRes = await authenticateWithNativeBiometrics('Scan fingerprint or face to link native device unlock');
+        if (authRes.success) {
+          const updated = {
+            ...db,
+            auth: { ...db.auth, fpId: 'native_biometric', rpId: 'native_android' }
+          };
+          await triggerSave(updated);
+          await showAlert(`Native ${bioInfo.biometryType} lock linked successfully. You can now use your biometric sensor to unlock ShopPOS Pro!`, 'Biometrics Linked');
+        } else if (authRes.error && !authRes.error.toLowerCase().includes('cancel')) {
+          await showAlert(`Biometric enrollment check failed: ${authRes.error}`, 'Biometrics');
+        }
+        return;
+      }
+
+      // Web Browser Flow (WebAuthn or Simulated fallback)
       const rpId = window.location.hostname || 'localhost';
       const chall = crypto.getRandomValues(new Uint8Array(32));
       const uId = crypto.getRandomValues(new Uint8Array(16));
 
       if (!window.PublicKeyCredential) {
         const confirmSim = await showConfirm(
-          "Hardware biometric sensors (WebAuthn) are not supported in this Android WebView environment.\n\nWould you like to enable a Non-Secure Virtual Touch Bypass (for demo / quick testing only)?",
+          "Hardware biometric sensors (WebAuthn) are not supported in this browser environment.\n\nWould you like to enable a Non-Secure Virtual Touch Bypass (for demo / quick testing only)?",
           "Enable Non-Secure Touch Bypass"
         );
         if (confirmSim) {
@@ -1314,7 +1505,7 @@ export default function App() {
       } catch (innerErr: any) {
         console.warn('Physical biometric registration blocked/failed, setting up simulated:', innerErr);
         const confirmSim = await showConfirm(
-          "Hardware biometrics was blocked or interrupted (e.g. inside sandboxed WebView).\n\nWould you like to enable a Non-Secure Virtual Touch Bypass for testing instead?",
+          "Hardware biometrics was blocked or cancelled.\n\nWould you like to enable a Non-Secure Virtual Touch Bypass for testing instead?",
           "Enable Non-Secure Touch Bypass"
         );
         if (confirmSim) {
@@ -2287,6 +2478,22 @@ export default function App() {
                 return;
               }
 
+              // Native Biometric Unlock Flow (Android / iOS)
+              if (db.auth.fpId === 'native_biometric') {
+                const authRes = await authenticateWithNativeBiometrics('Scan fingerprint or face to unlock ShopPOS Pro');
+                if (authRes.success) {
+                  localStorage.setItem('sp_session', '1');
+                  sessionDateRef.current = getTodayDateString();
+                  snoozeUntilMsRef.current = null;
+                  setSessionLogoutReason(null);
+                  setIsAuthenticated(true);
+                  setLoginError('');
+                } else if (authRes.error && !authRes.error.toLowerCase().includes('cancel')) {
+                  setLoginError(`Biometric verification failed: ${authRes.error}`);
+                }
+                return;
+              }
+
               // Handle simulated biometric token or virtual mode
               if (db.auth.fpId === 'simulated_biometric' || !window.PublicKeyCredential) {
                 setShowBiometricScanOverlay(true);
@@ -2309,6 +2516,9 @@ export default function App() {
 
                 if (authCr) {
                   localStorage.setItem('sp_session', '1');
+                  sessionDateRef.current = getTodayDateString();
+                  snoozeUntilMsRef.current = null;
+                  setSessionLogoutReason(null);
                   setIsAuthenticated(true);
                   setLoginError('');
                 }
