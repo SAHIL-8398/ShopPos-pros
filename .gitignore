@@ -6,3 +6,5 @@ coverage/
 *.log
 .env*
 !.env.example
+shoppos-release.keystore
+keystore-base64.txt
