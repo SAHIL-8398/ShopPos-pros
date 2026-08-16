@@ -122,10 +122,10 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
     if (!isKnownProduct || !continuousScanRef.current) {
       isProcessingScanRef.current = true;
       if (isNativeRef.current) {
+        document.documentElement.classList.remove('barcode-scanner-active');
         document.body.classList.remove('barcode-scanner-active');
-        BarcodeScanner.removeAllListeners().catch(() => {});
-        BarcodeScanner.stopScan().catch(() => {});
-        (BarcodeScanner as any).showBackground?.().catch(() => {});
+        BarcodeScanner.removeAllListeners().catch((err) => console.error('[MLKit] removeAllListeners error:', err));
+        BarcodeScanner.stopScan().catch((err) => console.error('[MLKit] stopScan error:', err));
       } else {
         stopWebScannerInstance();
       }
@@ -325,9 +325,12 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
         setScanStatus('Initializing native barcode scanner...');
 
         // 1. Check & request camera permission on native Android
+        console.log('[MLKit] Checking camera permissions...');
         const permStatus = await BarcodeScanner.checkPermissions();
+        console.log('[MLKit] Camera permission status:', permStatus);
         if (permStatus.camera !== 'granted') {
           const req = await BarcodeScanner.requestPermissions();
+          console.log('[MLKit] Requested camera permission result:', req);
           if (req.camera !== 'granted') {
             if (isMounted) {
               setHasCamera(false);
@@ -341,8 +344,10 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
         // 2. Check if Google Barcode Scanner MLKit module is downloaded
         try {
           const moduleCheck = await BarcodeScanner.isGoogleBarcodeScannerModuleAvailable();
+          console.log('[MLKit] Google Barcode Scanner module available:', moduleCheck);
           if (!moduleCheck.available) {
             setScanStatus('Downloading MLKit scanning models (first time only)...');
+            console.log('[MLKit] Installing Google Barcode Scanner module...');
             await BarcodeScanner.installGoogleBarcodeScannerModule();
           }
         } catch (mErr) {
@@ -352,22 +357,25 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
         // 3. Check torch capability
         try {
           const torchCheck = await BarcodeScanner.isTorchAvailable();
+          console.log('[MLKit] Torch available:', torchCheck);
           if (isMounted && torchCheck.available) {
             setTorchSupport(true);
           }
-        } catch {}
+        } catch (tErr) {
+          console.warn('[MLKit] Torch check note:', tErr);
+        }
 
         if (!isMounted) return;
 
         // 4. Enable transparent webview background for native camera feed preview
+        console.log('[MLKit] Enabling barcode-scanner-active transparent CSS mode');
+        document.documentElement.classList.add('barcode-scanner-active');
         document.body.classList.add('barcode-scanner-active');
-        try {
-          await (BarcodeScanner as any).hideBackground?.();
-        } catch {}
 
         // 5. Add barcodes scanned listener
         await BarcodeScanner.addListener('barcodesScanned', async (result) => {
           if (!isMounted) return;
+          console.log('[MLKit] barcodesScanned event received:', result);
           const barcode = result?.barcodes?.[0];
           if (barcode && barcode.rawValue) {
             triggerScanSuccess(barcode.rawValue);
@@ -375,6 +383,7 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
         });
 
         // 6. Start scanning with Back lens fallback
+        console.log('[MLKit] Invoking BarcodeScanner.startScan()...');
         try {
           await BarcodeScanner.startScan({
             formats: [
@@ -390,6 +399,7 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
             ],
             lensFacing: LensFacing.Back,
           });
+          console.log('[MLKit] BarcodeScanner.startScan() succeeded with LensFacing.Back');
         } catch (scanStartErr) {
           console.warn('[MLKit] LensFacing.Back failed, retrying Front:', scanStartErr);
           await BarcodeScanner.startScan({
@@ -406,6 +416,7 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
             ],
             lensFacing: LensFacing.Front,
           });
+          console.log('[MLKit] BarcodeScanner.startScan() succeeded with LensFacing.Front');
         }
 
         isScannerRunningRef.current = true;
@@ -414,9 +425,9 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
           setScanStatus('🟢 Native MLKit active — align barcode in reticle');
         }
       } catch (nativeErr: any) {
-        console.error('[MLKit] Native scanner error:', nativeErr);
+        console.error('[MLKit] Native scanner error during init:', nativeErr);
+        document.documentElement.classList.remove('barcode-scanner-active');
         document.body.classList.remove('barcode-scanner-active');
-        (BarcodeScanner as any).showBackground?.().catch(() => {});
         if (isMounted) {
           // Attempt web fallback even if on native platform
           setScanStatus('Attempting camera fallback...');
@@ -490,10 +501,11 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
     return () => {
       isMounted = false;
       if (isNativeRef.current) {
+        console.log('[MLKit] Unmounting ScannerOverlay: cleaning up native scanner...');
+        document.documentElement.classList.remove('barcode-scanner-active');
         document.body.classList.remove('barcode-scanner-active');
-        BarcodeScanner.removeAllListeners().catch(() => {});
-        BarcodeScanner.stopScan().catch(() => {});
-        (BarcodeScanner as any).showBackground?.().catch(() => {});
+        BarcodeScanner.removeAllListeners().catch((err) => console.error('[MLKit] removeAllListeners error on unmount:', err));
+        BarcodeScanner.stopScan().catch((err) => console.error('[MLKit] stopScan error on unmount:', err));
       }
       stopWebScannerInstance();
     };
@@ -502,10 +514,8 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
   const handleSwitchCamera = async () => {
     if (isNativeRef.current) {
       try {
+        console.log('[MLKit] Switching native camera lens...');
         await BarcodeScanner.stopScan();
-        try {
-          await (BarcodeScanner as any).hideBackground?.();
-        } catch {}
         await BarcodeScanner.startScan({
           formats: [
             BarcodeFormat.Ean13,
@@ -520,8 +530,9 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
           ],
           lensFacing: LensFacing.Front,
         });
+        console.log('[MLKit] Switched to LensFacing.Front');
       } catch (e) {
-        console.warn('Lens switch failed:', e);
+        console.error('[MLKit] Lens switch failed:', e);
       }
       return;
     }
@@ -540,12 +551,12 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
     setScanStatus('Retrying camera connection...');
     if (isNativeRef.current) {
       try {
+        console.log('[MLKit] Retrying native camera permissions...');
         const req = await BarcodeScanner.requestPermissions();
+        console.log('[MLKit] Retry permissions result:', req);
         if (req.camera === 'granted') {
+          document.documentElement.classList.add('barcode-scanner-active');
           document.body.classList.add('barcode-scanner-active');
-          try {
-            await (BarcodeScanner as any).hideBackground?.();
-          } catch {}
           await BarcodeScanner.startScan({
             formats: [
               BarcodeFormat.Ean13,
@@ -560,16 +571,48 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
             ],
             lensFacing: LensFacing.Back,
           });
+          console.log('[MLKit] Native scanner restarted successfully');
           setHasCamera(true);
           setScanStatus('🟢 Native MLKit active — align barcode in reticle');
           return;
         }
       } catch (e: any) {
-        console.warn('Native retry error:', e);
+        console.error('[MLKit] Native retry error:', e);
       }
     }
 
     await startWebScannerInstance(selectedCameraId || undefined);
+  };
+
+  const handleGooglePlayServicesScan = async () => {
+    if (!isNativeRef.current) return;
+    try {
+      setScanStatus('Launching Google Barcode Scanner dialog...');
+      console.log('[MLKit] Opening BarcodeScanner.scan() dialog...');
+      const result = await BarcodeScanner.scan({
+        formats: [
+          BarcodeFormat.Ean13,
+          BarcodeFormat.Ean8,
+          BarcodeFormat.Code128,
+          BarcodeFormat.Code39,
+          BarcodeFormat.UpcA,
+          BarcodeFormat.UpcE,
+          BarcodeFormat.QrCode,
+          BarcodeFormat.Itf,
+          BarcodeFormat.Codabar,
+        ],
+      });
+      console.log('[MLKit] Google Play Services Scan result:', result);
+      const barcode = result?.barcodes?.[0];
+      if (barcode && barcode.rawValue) {
+        triggerScanSuccess(barcode.rawValue);
+      } else {
+        setScanStatus('Ready to scan');
+      }
+    } catch (scanErr: any) {
+      console.error('[MLKit] BarcodeScanner.scan() dialog error:', scanErr);
+      setScanStatus('⚠️ Scan dialog cancelled or unavailable');
+    }
   };
 
   const toggleTorch = async () => {
@@ -670,10 +713,11 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
   const handleClose = () => {
     isProcessingScanRef.current = true;
     if (isNativeRef.current) {
+      console.log('[MLKit] Closing native scanner...');
+      document.documentElement.classList.remove('barcode-scanner-active');
       document.body.classList.remove('barcode-scanner-active');
-      BarcodeScanner.removeAllListeners().catch(() => {});
-      BarcodeScanner.stopScan().catch(() => {});
-      (BarcodeScanner as any).showBackground?.().catch(() => {});
+      BarcodeScanner.removeAllListeners().catch((err) => console.error('[MLKit] removeAllListeners error on close:', err));
+      BarcodeScanner.stopScan().catch((err) => console.error('[MLKit] stopScan error on close:', err));
     } else {
       stopWebScannerInstance();
     }
@@ -736,6 +780,18 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
               />
               <span className="text-[10px] font-bold text-slate-300">Continuous</span>
             </label>
+          )}
+
+          {isNative && (
+            <button
+              type="button"
+              onClick={handleGooglePlayServicesScan}
+              className="px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-extrabold active:scale-95 transition-transform flex items-center gap-1 cursor-pointer shadow-xs border border-indigo-500/50"
+              title="Open Google Play Services bottom-sheet Code Scanner dialog"
+            >
+              <Camera className="w-3.5 h-3.5" />
+              Google Dialog
+            </button>
           )}
 
           {availableCameras.length > 1 && !isNative && (
