@@ -15,15 +15,26 @@ jobs:
       - run: npx cap add android
       - run: npx cap sync android
 
-      - name: Ensure Camera permission is present
+      - name: Force transparent WebView background for camera preview
         run: |
-          MANIFEST=android/app/src/main/AndroidManifest.xml
-          if ! grep -q "android.permission.CAMERA" "$MANIFEST"; then
-            sed -i 's/<manifest /<manifest xmlns:tools="http:\/\/schemas.android.com\/tools" /' "$MANIFEST"
-            sed -i '/<\/manifest>/i\    <uses-permission android:name="android.permission.CAMERA" \/>' "$MANIFEST"
-          fi
-          echo "---- Verifying manifest ----"
-          grep "uses-permission" "$MANIFEST"
+          MAINACT=android/app/src/main/java/com/shoppos/pro/MainActivity.java
+          cat > "$MAINACT" << 'EOF'
+          package com.shoppos.pro;
+
+          import android.graphics.Color;
+          import android.os.Bundle;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  this.bridge.getWebView().setBackgroundColor(Color.TRANSPARENT);
+              }
+          }
+          EOF
+          echo "---- MainActivity.java patched ----"
+          cat "$MAINACT"
 
       - uses: actions/setup-java@v4
         with:
