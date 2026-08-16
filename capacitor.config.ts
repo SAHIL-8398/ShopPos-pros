@@ -4,6 +4,7 @@ const config: CapacitorConfig = {
   appId: 'com.shoppos.pro',
   appName: 'ShopPOS Pro',
   webDir: 'dist',
+  backgroundColor: '#00000000',
   server: {
     androidScheme: 'https',
     cleartext: true
