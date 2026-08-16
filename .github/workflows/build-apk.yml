@@ -25,6 +25,27 @@ jobs:
           echo "---- Verifying manifest ----"
           grep "uses-permission" "$MANIFEST"
 
+      - name: Force transparent WebView background for camera preview
+        run: |
+          MAINACT=android/app/src/main/java/com/shoppos/pro/MainActivity.java
+          cat > "$MAINACT" << 'EOF'
+          package com.shoppos.pro;
+
+          import android.graphics.Color;
+          import android.os.Bundle;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  this.bridge.getWebView().setBackgroundColor(Color.TRANSPARENT);
+              }
+          }
+          EOF
+          echo "---- MainActivity.java patched ----"
+          cat "$MAINACT"
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
