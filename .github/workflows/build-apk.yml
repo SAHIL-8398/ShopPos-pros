@@ -15,6 +15,16 @@ jobs:
       - run: npx cap add android
       - run: npx cap sync android
 
+      - name: Ensure Camera permission is present
+        run: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          if ! grep -q "android.permission.CAMERA" "$MANIFEST"; then
+            sed -i 's/<manifest /<manifest xmlns:tools="http:\/\/schemas.android.com\/tools" /' "$MANIFEST"
+            sed -i '/<\/manifest>/i\    <uses-permission android:name="android.permission.CAMERA" \/>' "$MANIFEST"
+          fi
+          echo "---- Verifying manifest ----"
+          grep "uses-permission" "$MANIFEST"
+
       - name: Force transparent WebView background for camera preview
         run: |
           MAINACT=android/app/src/main/java/com/shoppos/pro/MainActivity.java
