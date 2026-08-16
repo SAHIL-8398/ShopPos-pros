@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'motion/react';
 import { 
   Home, 
@@ -30,7 +30,8 @@ import {
   ArrowUpDown,
   Calculator,
   FileText,
-  ArrowLeft
+  ArrowLeft,
+  BookOpen
 } from 'lucide-react';
 
 import { AppDatabase, Product, Sale, Customer, Expense, Supplier, Staff, Settings, SaleItem, PurchaseItem } from './types';
@@ -71,6 +72,9 @@ import { CustomerFormModal } from './components/CustomerFormModal';
 import { CalculatorModal } from './components/CalculatorModal';
 import { DayChangeLogoutBanner } from './components/DayChangeLogoutBanner';
 import { AppLogo } from './components/AppLogo';
+import { FirstLoginSetupForm, FirstLoginSetupData } from './components/FirstLoginSetupForm';
+import { StoreOnboardingModal } from './components/StoreOnboardingModal';
+import { AppGuideModal } from './components/AppGuideModal';
 
 interface AppHistoryState {
   idx: number;
@@ -145,6 +149,7 @@ export default function App() {
   const [isSuppliersOpen, setIsSuppliersOpen] = useState<boolean>(false);
   const [isStaffOpen, setIsStaffOpen] = useState<boolean>(false);
   const [isLabelsOpen, setIsLabelsOpen] = useState<boolean>(false);
+  const [labelGeneratorProductId, setLabelGeneratorProductId] = useState<string | null>(null);
   const [isExpensesOpen, setIsExpensesOpen] = useState<boolean>(false);
   
   const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(false);
@@ -171,6 +176,8 @@ export default function App() {
   // UPI payment QR simulation
   const [qrUpiAmount, setQrUpiAmount] = useState<number | null>(null);
   const [isUpiQrOpen, setIsUpiQrOpen] = useState<boolean>(false);
+  const [isStoreOnboardingModalOpen, setIsStoreOnboardingModalOpen] = useState<boolean>(false);
+  const [isAppGuideOpen, setIsAppGuideOpen] = useState<boolean>(false);
 
   // Customer Product Returns and Dark Theme states
   const [returnBillId, setReturnBillId] = useState<string | null>(null);
@@ -192,6 +199,22 @@ export default function App() {
   const [sessionLogoutReason, setSessionLogoutReason] = useState<string | null>(null);
   const [isSimulatedWarningTest, setIsSimulatedWarningTest] = useState<boolean>(false);
   const testCountdownTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isScanningBarcodeProcessingRef = useRef<boolean>(false);
+  const toastTimerRef = useRef<any>(null);
+
+  const showToast = useCallback((message: string, durationMs = 2500) => {
+    const toast = document.getElementById('toast');
+    if (!toast) return;
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    toast.textContent = message;
+    toast.classList.add('opacity-100');
+    toastTimerRef.current = setTimeout(() => {
+      toast.classList.remove('opacity-100');
+      toastTimerRef.current = null;
+    }, durationMs);
+  }, []);
 
   const handleSelectActiveStaff = async (id: string | null) => {
     setActiveStaffId(id);
@@ -1095,23 +1118,27 @@ export default function App() {
     }
   };
 
-  const handleFirstLoginSave = async (nid: string, pw1: string, shopName: string) => {
-    const hashed = await hashPassword(pw1);
+  const handleFirstLoginSave = async (data: FirstLoginSetupData) => {
+    const hashed = await hashPassword(data.auth.pw);
     const updated = {
       ...db,
       settings: {
         ...db.settings,
-        shopName: shopName ? shopName.trim() : 'My Shop',
+        ...data.settings,
+        shopName: data.settings.shopName ? data.settings.shopName.trim() : 'My Shop',
       },
       auth: {
         ...db.auth,
-        userId: nid ? nid.trim() : db.auth.userId,
+        userId: data.auth.userId ? data.auth.userId.trim() : 'admin',
         pwHash: hashed,
         firstLogin: false,
       }
     };
     await triggerSave(updated);
     localStorage.setItem('sp_session', '1');
+    sessionDateRef.current = getTodayDateString();
+    snoozeUntilMsRef.current = null;
+    setSessionLogoutReason(null);
     setIsAuthenticated(true);
   };
 
@@ -1617,13 +1644,15 @@ export default function App() {
   // ════════════════════════════════════════
   // PRODUCT CRUD SAVES
   // ════════════════════════════════════════
-  const handleSaveProduct = async (data: Partial<Product>) => {
+  const handleSaveProduct = async (data: Partial<Product>, printBarcodeAfterSave?: boolean) => {
     let list = [...db.products];
+    let savedProductId = activeProductId;
     if (activeProductId) {
       list = list.map(p => p.id === activeProductId ? { ...p, ...data } as Product : p);
     } else {
+      savedProductId = generateId();
       list.push({
-        id: generateId(),
+        id: savedProductId,
         ...data,
         createdAt: new Date().toISOString(),
       } as Product);
@@ -1631,6 +1660,20 @@ export default function App() {
     await triggerSave({ ...db, products: list });
     setIsProductModalOpen(false);
     setActiveProductId(null);
+    setScannedBarcodeProduct('');
+
+    // If added during billing flow, optionally auto-add item to active cart
+    if (activeTab === 'billing' && !activeProductId && savedProductId) {
+      const savedProd = list.find(p => p.id === savedProductId);
+      if (savedProd && savedProd.qty > 0) {
+        handleAddToCart(savedProd);
+      }
+    }
+
+    if (printBarcodeAfterSave && savedProductId) {
+      setLabelGeneratorProductId(savedProductId);
+      setIsLabelsOpen(true);
+    }
   };
 
   const handleDeleteProduct = async (id: string) => {
@@ -1762,71 +1805,87 @@ export default function App() {
   // CAM AND FALLBACK SCANNERS ON_SCAN
   // ════════════════════════════════════════
   const handleOnScanBarcode = async (barcode: string, keepOpen?: boolean) => {
-    if (!keepOpen) {
-      setIsScannerOpen(false);
+    if (isScanningBarcodeProcessingRef.current) {
+      return;
     }
-    
-    if (scannerMode === 'return_bill') {
-      const matchBill = db.sales.find(s => String(s.billNo) === barcode || s.id === barcode || `BILL_${s.billNo}` === barcode);
-      if (matchBill) {
-        setIsScannerOpen(false); // Force close
-        playBeepSound('success');
-        setActiveBillDetailsId(matchBill.id);
-        setIsHistoryOpen(false);
-      } else {
-        setIsScannerOpen(false); // Force close to see alert
-        playBeepSound('error');
-        await showAlert(`Invoice Bill #${barcode} not found in database history.`, 'Invoice Not Found');
+    isScanningBarcodeProcessingRef.current = true;
+
+    try {
+      if (!keepOpen) {
+        setIsScannerOpen(false);
       }
-    } else if (scannerMode === 'bill') {
-      const match = db.products.find(p => p.barcode === barcode);
-      if (match) {
-        await handleAddToCart(match);
-        playBeepSound('success');
-        // Toast message feedback
-        const toast = document.getElementById('toast');
-        if (toast) {
-          toast.textContent = `🛒 Scanned: ${match.name}`;
-          toast.classList.add('opacity-100');
-          setTimeout(() => toast?.classList.remove('opacity-100'), 1500);
-        }
-        if (!keepOpen) {
-          setIsScannerOpen(false);
-        }
-      } else {
-        // Intelligent automatic fallback: check if they scanned a client invoice barcode instead of a product SKU item
+      
+      if (scannerMode === 'return_bill') {
         const matchBill = db.sales.find(s => String(s.billNo) === barcode || s.id === barcode || `BILL_${s.billNo}` === barcode);
         if (matchBill) {
           setIsScannerOpen(false); // Force close
           playBeepSound('success');
           setActiveBillDetailsId(matchBill.id);
           setIsHistoryOpen(false);
-          return;
+        } else {
+          setIsScannerOpen(false); // Force close to see alert
+          playBeepSound('error');
+          await showAlert(`Invoice Bill #${barcode} not found in database history.`, 'Invoice Not Found');
         }
-        setIsScannerOpen(false); // Force close to see alert
-        playBeepSound('error');
-        await showAlert(`SKU ${barcode} not found in inventory. Go to "Stock" tab to register.`, 'Product Not Found');
-      }
-    } else if (scannerMode === 'restock') {
-      const match = db.products.find(p => p.barcode === barcode);
-      if (match) {
-        setIsScannerOpen(false); // Force close to see product restock modal
+      } else if (scannerMode === 'bill') {
+        const match = db.products.find(p => p.barcode === barcode);
+        if (match) {
+          await handleAddToCart(match);
+          playBeepSound('success');
+          showToast(`🛒 Scanned: ${match.name}`, 1500);
+          if (!keepOpen) {
+            setIsScannerOpen(false);
+          }
+        } else {
+          // Intelligent automatic fallback: check if they scanned a client invoice barcode instead of a product SKU item
+          const matchBill = db.sales.find(s => String(s.billNo) === barcode || s.id === barcode || `BILL_${s.billNo}` === barcode);
+          if (matchBill) {
+            setIsScannerOpen(false); // Force close
+            playBeepSound('success');
+            setActiveBillDetailsId(matchBill.id);
+            setIsHistoryOpen(false);
+            return;
+          }
+          setIsScannerOpen(false); // Force close to ask user
+          playBeepSound('error');
+
+          const wantToAdd = await showConfirm(
+            `Product with Barcode / SKU "${barcode}" was not found in inventory.\n\nWould you like to register and add this new product now?`,
+            'Add New Product'
+          );
+          if (wantToAdd) {
+            setScannedBarcodeProduct(barcode);
+            setActiveProductId(null);
+            setIsProductModalOpen(true);
+          } else {
+            showToast(`⚠️ Product not found for barcode: ${barcode}`, 2500);
+          }
+        }
+      } else if (scannerMode === 'restock') {
+        const match = db.products.find(p => p.barcode === barcode);
+        if (match) {
+          setIsScannerOpen(false); // Force close to see product restock modal
+          playBeepSound('success');
+          // Restock modal triggering helper
+          setActiveProductId(match.id);
+          setIsProductModalOpen(true);
+        } else {
+          setIsScannerOpen(false); // Force close to see product creation modal
+          playBeepSound('error');
+          // Option to add new with scanned code preset
+          setIsProductModalOpen(true);
+          setActiveProductId(null);
+          setScannerField(barcode);
+        }
+      } else if (scannerMode === 'prod') {
+        setIsScannerOpen(false); // Force close
         playBeepSound('success');
-        // Restock modal triggering helper
-        setActiveProductId(match.id);
-        setIsProductModalOpen(true);
-      } else {
-        setIsScannerOpen(false); // Force close to see product creation modal
-        playBeepSound('error');
-        // Option to add new with scanned code preset
-        setIsProductModalOpen(true);
-        setActiveProductId(null);
-        setScannerField(barcode);
+        setScannedBarcodeProduct(barcode);
       }
-    } else if (scannerMode === 'prod') {
-      setIsScannerOpen(false); // Force close
-      playBeepSound('success');
-      setScannedBarcodeProduct(barcode);
+    } finally {
+      setTimeout(() => {
+        isScanningBarcodeProcessingRef.current = false;
+      }, 400);
     }
   };
 
@@ -2803,7 +2862,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={handleLogout}
-                  className="w-7 h-7 flex items-center justify-center bg-rose-500/10 hover:bg-rose-500/20 rounded-lg text-rose-400 hover:text-rose-300 transition-all cursor-pointer active:scale-95 animate-fade-in"
+                  className="w-7 h-7 flex items-center justify-center bg-rose-500/10 hover:bg-rose-500/20 rounded-lg text-rose-400 hover:text-rose-350 transition-all cursor-pointer active:scale-95 animate-fade-in"
                   title="Sign Out"
                 >
                   <LogOut className="w-3.5 h-3.5" />
@@ -2824,6 +2883,7 @@ export default function App() {
                   setActiveBillDetailsId(id);
                 }}
                 onLogout={handleLogout}
+                onOpenStoreSetup={() => setIsStoreOnboardingModalOpen(true)}
               />
             )}
 
@@ -2855,6 +2915,11 @@ export default function App() {
                   setIsReceiptOpen(true);
                 } : undefined}
                 settings={db.settings}
+                onAddNewProductWithBarcode={(scannedCode) => {
+                  setScannedBarcodeProduct(scannedCode);
+                  setActiveProductId(null);
+                  setIsProductModalOpen(true);
+                }}
               />
             )}
 
@@ -2931,7 +2996,10 @@ export default function App() {
                 }}
                 onOpenSuppliers={() => setIsSuppliersOpen(true)}
                 onOpenStaff={() => setIsStaffOpen(true)}
-                onOpenLabels={() => setIsLabelsOpen(true)}
+                onOpenLabels={() => {
+                  setLabelGeneratorProductId(null);
+                  setIsLabelsOpen(true);
+                }}
                 onOpenExpenses={() => setIsExpensesOpen(true)}
                 onExportData={() => {
                   const blob = new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' });
@@ -2952,6 +3020,7 @@ export default function App() {
                 isDarkMode={isDarkMode}
                 onToggleDarkMode={setIsDarkMode}
                 onTestDayChangeWarning={handleTestDayChangeWarning}
+                onOpenAppGuide={() => setIsAppGuideOpen(true)}
               />
             )}
           </main>
@@ -3110,7 +3179,11 @@ export default function App() {
                   products={db.products} 
                   shopName={db.settings.shopName}
                   fssai={db.settings.fssai}
-                  onClose={() => setIsLabelsOpen(false)}
+                  initialProductId={labelGeneratorProductId}
+                  onClose={() => {
+                    setIsLabelsOpen(false);
+                    setLabelGeneratorProductId(null);
+                  }}
                   onQuickUpdateBarcode={async (productId, newBarcode) => {
                     const list = db.products.map(p => p.id === productId ? { ...p, barcode: newBarcode } : p);
                     await triggerSave({ ...db, products: list });
@@ -3619,6 +3692,24 @@ export default function App() {
               </div>
             </div>
           )}
+
+          {/* STORE ONBOARDING & PROFILE QUICK SETUP MODAL */}
+          <StoreOnboardingModal
+            settings={db.settings}
+            isOpen={isStoreOnboardingModalOpen}
+            onClose={() => setIsStoreOnboardingModalOpen(false)}
+            onSave={async (updatedSettings) => {
+              await handleSaveShopInfo(updatedSettings);
+              localStorage.setItem('shoppos_hide_profile_banner', '1');
+            }}
+          />
+
+          {/* MASTER APP GUIDE & USER MANUAL MODAL */}
+          <AppGuideModal
+            isOpen={isAppGuideOpen}
+            onClose={() => setIsAppGuideOpen(false)}
+            settings={db.settings}
+          />
         </div>
       )}
     </div>
@@ -3933,119 +4024,6 @@ export default function App() {
   function on_billing_clear_cart() {
     setCart([]);
   }
-}
-
-// ════════════════════════════════════════
-// SLEEK WELCOME CONFIG FOR FIRST-TIME RUNS
-// ════════════════════════════════════════
-interface FirstLoginSetupProps {
-  onSave: (nid: string, pw1: string, shopName: string) => void;
-}
-function FirstLoginSetupForm({ onSave }: FirstLoginSetupProps) {
-  const [shopName, setShopName] = useState('');
-  const [nid, setNid] = useState('');
-  const [pw1, setPw1] = useState('');
-  const [pw2, setPw2] = useState('');
-  const [errorMsg, setErrorMsg] = useState('');
-
-  const handleSetupSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!shopName.trim()) {
-      setErrorMsg('Shop Name is required to personalize your register');
-      return;
-    }
-    if (!pw1 || pw1.length < 6) {
-      setErrorMsg('Secure passcode is required (min 6 characters)');
-      return;
-    }
-    if (pw1 !== pw2) {
-      setErrorMsg('Passwords do not match');
-      return;
-    }
-    onSave(nid.trim() || 'admin', pw1, shopName.trim());
-  };
-
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-950 flex flex-col justify-center p-4">
-      <div className="bg-slate-900/80 backdrop-blur-md border border-slate-800 rounded-3xl p-6 shadow-2xl max-w-sm w-full mx-auto text-white">
-        <div className="text-center mb-4 select-none">
-          <AppLogo size="xl" rounded="rounded-2xl" className="mx-auto mb-3" />
-          <h2 className="text-2xl font-black tracking-tight text-white leading-none">Configure ShopPOS Pro</h2>
-          <p className="text-xs text-indigo-400 font-bold mt-1.5 uppercase tracking-wide">First-time register setup</p>
-        </div>
-
-        <form onSubmit={handleSetupSubmit} className="space-y-3.5 mt-4">
-          <div>
-            <label className="block text-[10px] font-bold text-indigo-400 uppercase tracking-wider mb-1">
-              Shop Name *
-            </label>
-            <input
-              type="text"
-              value={shopName}
-              onChange={(e) => setShopName(e.target.value)}
-              required
-              placeholder="e.g. My General Store"
-              className="w-full bg-slate-950/60 border border-slate-805 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-indigo-500 font-bold text-white"
-            />
-          </div>
-
-          <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-              Operator Username / ID
-            </label>
-            <input
-              type="text"
-              value={nid}
-              onChange={(e) => setNid(e.target.value)}
-              placeholder="Default is 'admin'"
-              className="w-full bg-slate-950/60 border border-slate-805 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-indigo-505 font-bold text-white"
-            />
-          </div>
-
-          <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-              Set Security Passcode *
-            </label>
-            <input
-              type="password"
-              placeholder="minimum 6 characters"
-              value={pw1}
-              onChange={(e) => setPw1(e.target.value)}
-              required
-              className="w-full bg-slate-950/60 border border-slate-805 rounded-xl px-4 py-3 text-sm outline-none focus:border-indigo-500 text-white font-bold"
-            />
-          </div>
-
-          <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-              Confirm passcode *
-            </label>
-            <input
-              type="password"
-              value={pw2}
-              onChange={(e) => setPw2(e.target.value)}
-              required
-              placeholder="••••••"
-              className="w-full bg-slate-950/60 border border-slate-805 rounded-xl px-4 py-3 text-sm outline-none focus:border-indigo-400 text-white font-bold"
-            />
-          </div>
-
-          {errorMsg && (
-            <p className="text-xs text-rose-350 bg-rose-950/40 p-2.5 rounded-xl text-center font-bold border border-rose-900/50">
-              {errorMsg}
-            </p>
-          )}
-
-          <button
-            type="submit"
-            className="w-full py-3 bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-black uppercase tracking-wider rounded-xl cursor-pointer transition-colors"
-          >
-            Create Store & Open Register
-          </button>
-        </form>
-      </div>
-    </div>
-  );
 }
 
 // ════════════════════════════════════════

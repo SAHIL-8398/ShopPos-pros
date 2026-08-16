@@ -35,6 +35,7 @@ interface BillingViewProps {
   showPrompt?: (message: string, defaultValue?: string, title?: string, placeholder?: string) => Promise<string | null>;
   onPrintLastBill?: () => void;
   settings?: Settings;
+  onAddNewProductWithBarcode?: (barcode: string) => void;
 }
 
 export const BillingView: React.FC<BillingViewProps> = ({
@@ -54,6 +55,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
   showPrompt,
   onPrintLastBill,
   settings,
+  onAddNewProductWithBarcode,
 }) => {
   const { t } = useTranslation();
   const { showAlert, showConfirm: dialogConfirm, showPrompt: dialogPrompt } = useDialog();
@@ -65,6 +67,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
   const [custAddress, setCustAddress] = useState<string>('');
 
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const isSearchingRef = useRef<boolean>(false);
 
   // Auto-add product when exact barcode match is found (perfect for physical barcode scanners)
   useEffect(() => {
@@ -119,6 +122,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
+                if (isSearchingRef.current) return;
                 const targetCode = search.trim().toLowerCase();
                 if (!targetCode) return;
 
@@ -153,8 +157,41 @@ export const BillingView: React.FC<BillingViewProps> = ({
                     onAddToCart(singleProduct);
                     setSearch('');
                     setTimeout(() => searchInputRef.current?.focus(), 50);
+                    return;
                   }
                 }
+
+                // 4. Product not found: Ask user to add product, else show notification
+                const rawSearch = search.trim();
+                setSearch('');
+                isSearchingRef.current = true;
+                (async () => {
+                  try {
+                    const wantToAdd = await effectiveShowConfirm(
+                      `Product with Barcode / Search "${rawSearch}" was not found in inventory.\n\nWould you like to register and add this new product now?`,
+                      'Add New Product'
+                    );
+                    if (wantToAdd) {
+                      if (onAddNewProductWithBarcode) {
+                        onAddNewProductWithBarcode(rawSearch);
+                      }
+                    } else {
+                      const toast = document.getElementById('toast');
+                      if (toast) {
+                        toast.textContent = `⚠️ Product not found for barcode: ${rawSearch}`;
+                        toast.classList.add('opacity-100');
+                        setTimeout(() => toast?.classList.remove('opacity-100'), 2500);
+                      } else {
+                        await showAlert(`Product not found for barcode: ${rawSearch}`, 'Product Not Found');
+                      }
+                    }
+                  } finally {
+                    setTimeout(() => {
+                      isSearchingRef.current = false;
+                      searchInputRef.current?.focus();
+                    }, 100);
+                  }
+                })();
               }
             }}
             className="flex-1 text-sm bg-transparent border-none outline-none focus:ring-0 text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-550"

@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
-import { Home, Bell, LogOut, ShoppingCart, History, Users, ArrowUpRight, TrendingUp, AlertCircle, Calendar, Sparkles } from 'lucide-react';
+import React, { useState } from 'react';
+import { Home, Bell, LogOut, ShoppingCart, History, Users, ArrowUpRight, TrendingUp, AlertCircle, Calendar, Sparkles, Store, CheckCircle2, X } from 'lucide-react';
 import { AppDatabase, Sale } from '../types';
 import { formatCurrency, computePredictiveAlerts } from '../utils';
 import { useTranslation } from '../context/LocalizationContext';
@@ -16,6 +16,7 @@ interface DashboardViewProps {
   onOpenHistory: () => void;
   onOpenBillDetails: (saleId: string) => void;
   onLogout: () => void;
+  onOpenStoreSetup?: () => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -25,10 +26,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenHistory,
   onOpenBillDetails,
   onLogout,
+  onOpenStoreSetup,
 }) => {
   const { t } = useTranslation();
   const settings = db.settings;
   const todayStr = new Date().toISOString().split('T')[0];
+  const [hideProfileBanner, setHideProfileBanner] = useState<boolean>(() => {
+    return localStorage.getItem('shoppos_hide_profile_banner') === '1';
+  });
+
+  // Calculate missing profile items
+  const isProfileIncomplete = !settings.phone || !settings.address || !settings.upi;
   
   // Filter sales for today
   const todaySales = db.sales.filter(s => s.date === todayStr && !s.voided);
@@ -85,6 +93,56 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   return (
     <div className="flex flex-col gap-4 animate-fade-in-up">
+      {/* 🏪 Store Profile Setup Onboarding Banner */}
+      {isProfileIncomplete && !hideProfileBanner && (
+        <div className="bg-indigo-500/10 dark:bg-indigo-950/40 border border-indigo-500/20 dark:border-indigo-800/60 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-500 dark:text-indigo-400 shrink-0">
+              <Store className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5">
+                <span>Complete Store Profile</span>
+                <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-700 dark:text-indigo-300">
+                  Quick Setup
+                </span>
+              </h4>
+              <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium mt-0.5">
+                Add your Phone, Address, GSTIN & UPI ID to personalize receipts & dynamic Bharat QR codes.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 w-full sm:w-auto justify-end shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                if (onOpenStoreSetup) {
+                  onOpenStoreSetup();
+                } else {
+                  onNavigate('settings');
+                }
+              }}
+              className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-1 cursor-pointer"
+            >
+              <span>Setup Details</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setHideProfileBanner(true);
+                localStorage.setItem('shoppos_hide_profile_banner', '1');
+              }}
+              className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              title="Dismiss for now"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Notifications Warning Bars */}
       {alertsCount > 0 && (
         <button

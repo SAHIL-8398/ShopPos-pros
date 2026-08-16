@@ -13,7 +13,7 @@ interface ProductFormModalProps {
   product: Product | null;
   suppliers: Supplier[];
   onClose: () => void;
-  onSave: (data: Partial<Product>) => void;
+  onSave: (data: Partial<Product>, printBarcodeAfterSave?: boolean) => void;
   onDelete: (id: string) => void;
   onOpenScanner: (field: string) => void;
   scannedBarcode?: string;
@@ -39,11 +39,12 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
   defaultSettings,
   products = [],
 }) => {
-  const { showAlert } = useDialog();
+  const { showAlert, showConfirm } = useDialog();
 
   // Core properties
   const [name, setName] = useState<string>('');
   const [barcode, setBarcode] = useState<string>('');
+  const [barcodeGenerated, setBarcodeGenerated] = useState<boolean>(false);
   const [category, setCategory] = useState<string>('');
   const [subcategory, setSubcategory] = useState<string>('');
   const [brand, setBrand] = useState<string>('');
@@ -192,9 +193,10 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
       attempts++;
     } while (products.some(p => p.barcode?.trim() === gen) && attempts < 100);
     setBarcode(gen);
+    setBarcodeGenerated(true);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
       showAlert('Product Name is required!', 'Required Field');
@@ -218,6 +220,15 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
         showAlert(`⚠️ Duplicate Barcode: Barcode "${trimmedBarcode}" is already assigned to "${duplicate.name}". Barcodes must be unique to prevent scanning conflicts.`, 'Duplicate Barcode');
         return;
       }
+    }
+
+    let printBarcodeAfter = false;
+    if (barcodeGenerated && trimmedBarcode) {
+      const confirmPrint = await showConfirm(
+        `Barcode "${trimmedBarcode}" was generated for "${name.trim()}".\n\nWould you like to print barcode labels for this product now?`,
+        'Print Barcode Labels'
+      );
+      printBarcodeAfter = Boolean(confirmPrint);
     }
 
     onSave({
@@ -250,7 +261,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
       altUnitName: hasAltUnit ? altUnitName.trim() : undefined,
       altUnitFactor: hasAltUnit ? Number(altUnitFactor) : undefined,
       bomItems: bomItems.length > 0 ? bomItems : undefined,
-    });
+    }, printBarcodeAfter);
   };
 
   const handleAdjustQty = () => {
