@@ -125,6 +125,7 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
         document.body.classList.remove('barcode-scanner-active');
         BarcodeScanner.removeAllListeners().catch(() => {});
         BarcodeScanner.stopScan().catch(() => {});
+        (BarcodeScanner as any).showBackground?.().catch(() => {});
       } else {
         stopWebScannerInstance();
       }
@@ -360,6 +361,9 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
 
         // 4. Enable transparent webview background for native camera feed preview
         document.body.classList.add('barcode-scanner-active');
+        try {
+          await (BarcodeScanner as any).hideBackground?.();
+        } catch {}
 
         // 5. Add barcodes scanned listener
         await BarcodeScanner.addListener('barcodesScanned', async (result) => {
@@ -412,6 +416,7 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
       } catch (nativeErr: any) {
         console.error('[MLKit] Native scanner error:', nativeErr);
         document.body.classList.remove('barcode-scanner-active');
+        (BarcodeScanner as any).showBackground?.().catch(() => {});
         if (isMounted) {
           // Attempt web fallback even if on native platform
           setScanStatus('Attempting camera fallback...');
@@ -486,8 +491,9 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
       isMounted = false;
       if (isNativeRef.current) {
         document.body.classList.remove('barcode-scanner-active');
-        BarcodeScanner.removeAllListeners();
+        BarcodeScanner.removeAllListeners().catch(() => {});
         BarcodeScanner.stopScan().catch(() => {});
+        (BarcodeScanner as any).showBackground?.().catch(() => {});
       }
       stopWebScannerInstance();
     };
@@ -497,6 +503,9 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
     if (isNativeRef.current) {
       try {
         await BarcodeScanner.stopScan();
+        try {
+          await (BarcodeScanner as any).hideBackground?.();
+        } catch {}
         await BarcodeScanner.startScan({
           formats: [
             BarcodeFormat.Ean13,
@@ -534,6 +543,9 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
         const req = await BarcodeScanner.requestPermissions();
         if (req.camera === 'granted') {
           document.body.classList.add('barcode-scanner-active');
+          try {
+            await (BarcodeScanner as any).hideBackground?.();
+          } catch {}
           await BarcodeScanner.startScan({
             formats: [
               BarcodeFormat.Ean13,
@@ -661,6 +673,7 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
       document.body.classList.remove('barcode-scanner-active');
       BarcodeScanner.removeAllListeners().catch(() => {});
       BarcodeScanner.stopScan().catch(() => {});
+      (BarcodeScanner as any).showBackground?.().catch(() => {});
     } else {
       stopWebScannerInstance();
     }
