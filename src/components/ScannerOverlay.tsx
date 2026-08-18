@@ -37,6 +37,25 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const photoCaptureInputRef = useRef<HTMLInputElement>(null);
 
+  // Stable references to prevent recreation of callbacks and effect loops
+  const productsRef = useRef(products);
+  const onScanRef = useRef(onScan);
+  const onCloseRef = useRef(onClose);
+  const availableCamerasRef = useRef<CameraDevice[]>([]);
+  const selectedCameraIdRef = useRef<string>('');
+
+  useEffect(() => {
+    productsRef.current = products;
+  }, [products]);
+
+  useEffect(() => {
+    onScanRef.current = onScan;
+  }, [onScan]);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
   const [isNative] = useState<boolean>(Capacitor.isNativePlatform());
   type ScannerEngine = 'inapp_video' | 'google_dialog' | 'native_mlkit';
   const [scannerEngine, setScannerEngine] = useState<ScannerEngine>('inapp_video');
@@ -114,7 +133,7 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
     }
 
     // Capture recent scan log
-    const matchedProd = products.find(p => p.barcode === barcode);
+    const matchedProd = productsRef.current.find(p => p.barcode === barcode);
     const name = matchedProd ? matchedProd.name : 'Unknown Item / Code';
     const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     setRecentScans(prev => [{ barcode, name, timestamp }, ...prev].slice(0, 5));
@@ -131,20 +150,20 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
       } else {
         stopWebScannerInstance();
       }
-      onScan(barcode, false);
-      onClose();
+      onScanRef.current(barcode, false);
+      onCloseRef.current();
       return;
     }
 
     // Known product in continuous scan mode
     isProcessingScanRef.current = true;
     playBeepSound('success');
-    onScan(barcode, true);
+    onScanRef.current(barcode, true);
 
     setTimeout(() => {
       isProcessingScanRef.current = false;
     }, 1200);
-  }, [products, onScan, onClose, stopWebScannerInstance]);
+  }, [stopWebScannerInstance]);
 
   // Direct HTML5 Video Barcode Detector Fallback
   const startDirectVideoFallback = useCallback(async () => {
@@ -152,9 +171,10 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
       setScanStatus('Starting direct camera stream...');
       setUsingDirectVideo(true);
 
+      const targetCamId = selectedCameraIdRef.current;
       const constraints: MediaStreamConstraints = {
-        video: selectedCameraId
-          ? { deviceId: { exact: selectedCameraId } }
+        video: targetCamId
+          ? { deviceId: { exact: targetCamId } }
           : { facingMode: { ideal: 'environment' } },
         audio: false,
       };
@@ -204,7 +224,7 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
       setCameraError(directErr?.message || 'Camera stream blocked. Please grant camera permissions.');
       setScanStatus('⚠️ Camera offline. Use barcode simulator or upload photo below.');
     }
-  }, [selectedCameraId, triggerScanSuccess]);
+  }, [triggerScanSuccess]);
 
   // Main Web Scanner starter using Html5Qrcode with multiple fallback layers
   const startWebScannerInstance = useCallback(async (cameraIdToUse?: string) => {
@@ -288,9 +308,10 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
       }
 
       // 4. Try first enumerated camera device
-      if (!started && availableCameras.length > 0) {
+      const cams = availableCamerasRef.current;
+      if (!started && cams.length > 0) {
         try {
-          await scanner.start(availableCameras[0].id, config, (decoded) => triggerScanSuccess(decoded), () => {});
+          await scanner.start(cams[0].id, config, (decoded) => triggerScanSuccess(decoded), () => {});
           started = true;
         } catch (firstCamErr) {
           console.warn('Failed to start with first camera device:', firstCamErr);
@@ -318,9 +339,9 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
       // Fallback to direct video
       await startDirectVideoFallback();
     }
-  }, [availableCameras, stopWebScannerInstance, startDirectVideoFallback, triggerScanSuccess]);
+  }, [stopWebScannerInstance, startDirectVideoFallback, triggerScanSuccess]);
 
-  // Initial mount scanner orchestration
+  // Initial mount scanner orchestration - Runs ONCE on mount
   useEffect(() => {
     let isMounted = true;
 
@@ -376,6 +397,7 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
         try {
           const devices = await Html5Qrcode.getCameras();
           if (isMounted && devices && devices.length > 0) {
+            availableCamerasRef.current = devices;
             setAvailableCameras(devices);
             const backCam = devices.find(d => 
               d.label.toLowerCase().includes('back') || 
@@ -383,6 +405,7 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
               d.label.toLowerCase().includes('environment')
             );
             const chosenId = backCam ? backCam.id : devices[0].id;
+            selectedCameraIdRef.current = chosenId;
             setSelectedCameraId(chosenId);
             await startWebScannerInstance(chosenId);
             return;
@@ -415,7 +438,7 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
       }
       stopWebScannerInstance();
     };
-  }, [startWebScannerInstance, stopWebScannerInstance]);
+  }, []); // Mounts once, no infinite loops!
 
   const handleSwitchToMLKit = async () => {
     if (!isNativeRef.current) return;
