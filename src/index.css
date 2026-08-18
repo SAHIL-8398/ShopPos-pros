@@ -62,13 +62,8 @@ body {
 }
 
 /* Native Capacitor MLKit Barcode Scanner Transparent Background */
-html.barcode-scanner-active,
 body.barcode-scanner-active,
 body.barcode-scanner-active #root,
-body.barcode-scanner-active #root > div,
-body.barcode-scanner-active .min-h-screen,
-body.barcode-scanner-active aside,
-body.barcode-scanner-active main,
 body.barcode-scanner-active .scanner-native-transparent {
   background-color: transparent !important;
   background: transparent !important;
