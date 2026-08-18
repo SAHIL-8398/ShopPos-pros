@@ -145,9 +145,17 @@ export const LabelGenerator: React.FC<LabelGeneratorProps> = ({
   const svgContainerRef = useRef<HTMLDivElement>(null);
 
   // Print-specific filtering & sorting states
-  const [showAllProducts, setShowAllProducts] = React.useState<boolean>(false);
+  const [showAllProducts, setShowAllProducts] = React.useState<boolean>(Boolean(initialProductId));
   const [printSearchQuery, setPrintSearchQuery] = React.useState<string>('');
   const [printSortOrder, setPrintSortOrder] = React.useState<'none' | 'a-z' | 'z-a'>('none');
+
+  React.useEffect(() => {
+    if (initialProductId) {
+      setSelectedProductId(initialProductId);
+      setBulkMode(false);
+      setShowAllProducts(true);
+    }
+  }, [initialProductId]);
 
   const isScannedBarcode = (barcode: string) => {
     if (!barcode) return false;
@@ -178,8 +186,16 @@ export const LabelGenerator: React.FC<LabelGeneratorProps> = ({
       list.sort((a, b) => b.name.localeCompare(a.name));
     }
 
+    // 4. Ensure currently selected product is always included in the dropdown list
+    if (selectedProductId && !list.some(p => p.id === selectedProductId)) {
+      const selObj = products.find(p => p.id === selectedProductId);
+      if (selObj) {
+        list.unshift(selObj);
+      }
+    }
+
     return list;
-  }, [products, showAllProducts, printSearchQuery, printSortOrder]);
+  }, [products, showAllProducts, printSearchQuery, printSortOrder, selectedProductId]);
 
   const selectedProduct = products.find(p => p.id === selectedProductId);
 

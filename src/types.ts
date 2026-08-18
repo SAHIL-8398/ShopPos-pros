@@ -173,6 +173,7 @@ export interface Settings {
   defaultGstPct?: number;
 
   // Bill Format Settings
+  preferredReceiptPaperSize?: '58mm' | '80mm';
   showShopNameOnBill?: boolean;
   showAddressOnBill?: boolean;
   showPhoneOnBill?: boolean;
