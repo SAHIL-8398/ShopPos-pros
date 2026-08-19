@@ -8,7 +8,7 @@ import { jsPDF } from 'jspdf';
 import JsBarcode from 'jsbarcode';
 import { Share2, FileDown, MessageCircle, RefreshCw, X, Check, FolderCheck, Printer, Bluetooth } from 'lucide-react';
 import { Sale, Settings } from '../types';
-import { formatCurrency, copyToClipboard, formatDate } from '../utils';
+import { formatCurrency, copyToClipboard, formatDate, generateUpiQrDataUrl } from '../utils';
 import { useDialog } from '../context/DialogContext';
 import { savePdfToAppFolder, isNativeCapacitor } from '../services/nativeStorage';
 import { printPdfDocument, sharePdfDocument, printThermalReceipt } from '../services/printService';
@@ -64,33 +64,19 @@ const loadAnyQrCode = (text: string): Promise<string> => {
   });
 };
 
-const loadQrCode = (upi: string, name: string, total: number): Promise<string> => {
-  return new Promise((resolve) => {
-    const payload = `upi://pay?pa=${upi}&pn=${encodeURIComponent(name)}&am=${total}&cu=INR`;
-    // Compression: Fetch 150x150 QR code (vastly smaller file size but highly scannable)
-    const url = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(payload)}`;
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(img, 0, 0);
-        // Compress as JPEG at 0.65 quality to drastically reduce the PDF size
-        resolve(canvas.toDataURL('image/jpeg', 0.65));
-      } else {
-        resolve('');
-      }
-    };
-    img.onerror = () => {
-      resolve('');
-    };
-    img.src = url;
-  });
+const loadQrCode = async (upi: string, name: string, total: number): Promise<string> => {
+  if (!upi) return '';
+  try {
+    return await generateUpiQrDataUrl({
+      upiId: upi,
+      payeeName: name,
+      amount: total,
+      width: 150,
+    });
+  } catch (err) {
+    console.error('Error generating receipt UPI QR:', err);
+    return '';
+  }
 };
 
 

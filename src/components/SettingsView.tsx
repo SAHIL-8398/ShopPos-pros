@@ -37,13 +37,23 @@ import {
   Moon,
   Clock,
   Edit3,
-  BookOpen
+  BookOpen,
+  ShieldAlert,
+  Eye,
+  EyeOff,
+  SlidersHorizontal,
+  ArrowUp,
+  ArrowDown,
+  RotateCcw,
+  LayoutGrid
 } from 'lucide-react';
-import { AppDatabase, Settings as SettingsType } from '../types';
+import { AppDatabase, Settings as SettingsType, DashboardWidgetConfig, DashboardWidgetId } from '../types';
+import { hashPassword } from '../db';
 import { formatCurrency } from '../utils';
 import { useTranslation } from '../context/LocalizationContext';
 import { useDialog } from '../context/DialogContext';
 import { checkBiometricsAvailability, BiometricCheckResult } from '../services/biometricService';
+import { DEFAULT_WIDGET_CONFIGS, WIDGET_STORAGE_KEY, loadDashboardWidgets } from './DashboardView';
 
 interface SettingsViewProps {
   db: AppDatabase;
@@ -66,7 +76,7 @@ interface SettingsViewProps {
   onOpenAppGuide?: () => void;
 }
 
-type SettingsSection = 'profile' | 'shops' | 'modules' | 'security' | 'database';
+type SettingsSection = 'profile' | 'shops' | 'modules' | 'security' | 'layout' | 'database';
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   db,
@@ -145,6 +155,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
   const [isBillFormatModalOpen, setIsBillFormatModalOpen] = useState<boolean>(false);
 
+  // Wipe & Reset confirmation modal state
+  const [isWipeModalOpen, setIsWipeModalOpen] = useState<boolean>(false);
+  const [adminPasscodeInput, setAdminPasscodeInput] = useState<string>('');
+  const [wipeError, setWipeError] = useState<string | null>(null);
+  const [isWiping, setIsWiping] = useState<boolean>(false);
+  const [showWipePasscode, setShowWipePasscode] = useState<boolean>(false);
+
   // Multi-business profiles manager
   const [businessProfiles, setBusinessProfiles] = useState<{ id: string; name: string }[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string>('default');
@@ -156,6 +173,52 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     biometryType: 'Biometrics',
     strongBiometryIsAvailable: false,
   });
+
+  // Dashboard layout configuration states
+  const [dashboardWidgets, setDashboardWidgets] = useState<DashboardWidgetConfig[]>(() => loadDashboardWidgets());
+  const [widgetSaveToast, setWidgetSaveToast] = useState<string | null>(null);
+
+  const persistDashboardWidgets = (newWidgets: DashboardWidgetConfig[]) => {
+    setDashboardWidgets(newWidgets);
+    try {
+      localStorage.setItem(WIDGET_STORAGE_KEY, JSON.stringify(newWidgets));
+      window.dispatchEvent(new Event('shoppos_dashboard_widgets_changed'));
+    } catch (e) {
+      console.error('Failed to save dashboard widgets:', e);
+    }
+  };
+
+  const handleToggleWidgetVisibility = (id: DashboardWidgetId) => {
+    const updated = dashboardWidgets.map((w) => (w.id === id ? { ...w, visible: !w.visible } : w));
+    persistDashboardWidgets(updated);
+    setWidgetSaveToast('Widget visibility updated');
+    setTimeout(() => setWidgetSaveToast(null), 2000);
+  };
+
+  const handleMoveWidgetOrder = (index: number, direction: 'up' | 'down') => {
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= dashboardWidgets.length) return;
+
+    const copy = [...dashboardWidgets];
+    const item = copy.splice(index, 1)[0];
+    copy.splice(targetIndex, 0, item);
+    persistDashboardWidgets(copy);
+    setWidgetSaveToast('Widget order updated');
+    setTimeout(() => setWidgetSaveToast(null), 2000);
+  };
+
+  const handleResetDashboardWidgets = () => {
+    persistDashboardWidgets(DEFAULT_WIDGET_CONFIGS);
+    setWidgetSaveToast('Layout reset to default');
+    setTimeout(() => setWidgetSaveToast(null), 2000);
+  };
+
+  const handleEnableAllWidgets = () => {
+    const updated = dashboardWidgets.map((w) => ({ ...w, visible: true }));
+    persistDashboardWidgets(updated);
+    setWidgetSaveToast('All widgets enabled');
+    setTimeout(() => setWidgetSaveToast(null), 2000);
+  };
 
   useEffect(() => {
     checkBiometricsAvailability().then((info) => {
@@ -452,6 +515,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         >
           <Lock className="w-4 h-4" />
           Security Keys
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSection('layout')}
+          className={`flex-1 min-w-[120px] py-3 px-4 rounded-xl text-center text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer ${
+            activeSection === 'layout'
+              ? 'bg-white dark:bg-slate-850 text-indigo-650 dark:text-indigo-400 shadow-sm border border-slate-200/40 dark:border-slate-800/50'
+              : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+          }`}
+        >
+          <SlidersHorizontal className="w-4 h-4" />
+          Dashboard Layout
         </button>
 
         <button
@@ -1379,6 +1455,133 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       )}
 
+      {/* Dashboard Layout & Widgets Tab Panel */}
+      {activeSection === 'layout' && (
+        <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200/80 dark:border-slate-800/80 shadow-xs space-y-6 animate-fade-in">
+          <div className="border-b border-slate-100 dark:border-slate-800/50 pb-4 select-none flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                <SlidersHorizontal className="w-4 h-4 text-indigo-500" />
+                Dashboard Layout & Widgets
+              </h3>
+              <p className="text-[11px] text-slate-400 dark:text-slate-500 font-medium mt-1">
+                Customize which widgets appear on the main store register and reorder their vertical display sequence.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleEnableAllWidgets}
+                className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/50 text-indigo-650 dark:text-indigo-400 text-xs font-black uppercase tracking-wider rounded-xl border border-indigo-200/60 dark:border-indigo-800/60 cursor-pointer transition-all active:scale-95"
+              >
+                Enable All
+              </button>
+              <button
+                type="button"
+                onClick={handleResetDashboardWidgets}
+                className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-black uppercase tracking-wider rounded-xl flex items-center gap-1 cursor-pointer transition-all active:scale-95"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                Reset Default
+              </button>
+            </div>
+          </div>
+
+          {widgetSaveToast && (
+            <div className="p-3 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 text-xs font-bold rounded-2xl border border-emerald-200 dark:border-emerald-800 flex items-center gap-2 animate-in fade-in select-none">
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+              <span>{widgetSaveToast}</span>
+            </div>
+          )}
+
+          {/* Widget list */}
+          <div className="space-y-3">
+            {dashboardWidgets.map((widget, index) => (
+              <div
+                key={widget.id}
+                className={`p-4 rounded-2xl border transition-all flex items-center justify-between gap-4 ${
+                  widget.visible
+                    ? 'bg-slate-50 dark:bg-slate-950/60 border-slate-200/80 dark:border-slate-800/80 shadow-2xs'
+                    : 'bg-slate-100/40 dark:bg-slate-950/20 border-dashed border-slate-200 dark:border-slate-800/60 opacity-60'
+                }`}
+              >
+                {/* Reorder and description */}
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <div className="flex flex-col items-center justify-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      disabled={index === 0}
+                      onClick={() => handleMoveWidgetOrder(index, 'up')}
+                      className="p-1.5 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200/70 dark:hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-20 disabled:pointer-events-none cursor-pointer"
+                      title="Move Up"
+                    >
+                      <ArrowUp className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={index === dashboardWidgets.length - 1}
+                      onClick={() => handleMoveWidgetOrder(index, 'down')}
+                      className="p-1.5 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200/70 dark:hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-20 disabled:pointer-events-none cursor-pointer"
+                      title="Move Down"
+                    >
+                      <ArrowDown className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-black text-slate-850 dark:text-slate-100">
+                        {widget.name}
+                      </span>
+                      {!widget.visible && (
+                        <span className="text-[8.5px] bg-slate-200 dark:bg-slate-800 text-slate-500 font-bold px-2 py-0.5 rounded-md uppercase">
+                          Hidden
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium mt-0.5 leading-snug">
+                      {widget.description}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Visibility toggle button */}
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleToggleWidgetVisibility(widget.id)}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer ${
+                      widget.visible
+                        ? 'bg-indigo-600 text-white shadow-xs hover:bg-indigo-500'
+                        : 'bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-slate-700'
+                    }`}
+                  >
+                    {widget.visible ? (
+                      <>
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>Visible</span>
+                      </>
+                    ) : (
+                      <>
+                        <EyeOff className="w-3.5 h-3.5" />
+                        <span>Hidden</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="p-3 bg-slate-50 dark:bg-slate-950/60 rounded-2xl border border-slate-200/60 dark:border-slate-850 flex items-center justify-between text-slate-400 text-xs">
+            <span className="text-[11px] font-semibold">
+              Changes take effect immediately across all dashboard views.
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Database Systems and Backups Panel */}
       {activeSection === 'database' && (
         <div className="space-y-6">
@@ -1479,9 +1682,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
               {/* Developer sandboxes seeder / destructive section */}
               <div className="lg:col-span-2 space-y-4">
-                {/* Clear database action button */}
+                {/* Clear database action button with confirmation dialog */}
                 <button
-                  onClick={onClearAllData}
+                  type="button"
+                  onClick={() => {
+                    setAdminPasscodeInput('');
+                    setWipeError(null);
+                    setShowWipePasscode(false);
+                    setIsWipeModalOpen(true);
+                  }}
                   className="w-full flex items-center justify-center gap-1.5 py-3.5 bg-rose-50/50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/20 dark:hover:bg-rose-900/30 dark:text-rose-400 hover:border-rose-310 text-xs font-bold rounded-2xl transition-all active:scale-95 cursor-pointer border border-rose-100/60 dark:border-rose-900/30 font-black uppercase select-none"
                 >
                   <Trash className="w-4 h-4 text-rose-505" />
@@ -1665,6 +1874,136 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 Save Formatting
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* WIPE & RESET CONFIRMATION WARNING MODAL WITH ADMIN PASSCODE */}
+      {isWipeModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/75 backdrop-blur-xs z-[9000] flex items-center justify-center p-4 animate-fade-in select-none">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl w-full max-w-md overflow-hidden shadow-2xl border border-rose-200 dark:border-rose-900/50 animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="p-5 bg-rose-50 dark:bg-rose-950/40 border-b border-rose-100 dark:border-rose-900/40 flex items-start gap-3.5">
+              <div className="w-10 h-10 rounded-2xl bg-rose-600 text-white flex items-center justify-center shrink-0 shadow-md">
+                <ShieldAlert className="w-6 h-6 animate-pulse" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-sm font-black text-rose-900 dark:text-rose-200 uppercase tracking-wide">
+                  Wipe & Reset Register Base
+                </h3>
+                <p className="text-[11px] font-bold text-rose-700 dark:text-rose-400 mt-0.5 leading-snug">
+                  Permanent & Irreversible Factory Reset
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsWipeModalOpen(false);
+                  setAdminPasscodeInput('');
+                  setWipeError(null);
+                }}
+                className="w-8 h-8 rounded-full bg-rose-100/70 hover:bg-rose-200 text-rose-700 dark:bg-rose-900/40 dark:hover:bg-rose-900/60 dark:text-rose-300 flex items-center justify-center cursor-pointer transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setWipeError(null);
+                if (!adminPasscodeInput.trim()) {
+                  setWipeError('Please enter admin master passcode.');
+                  return;
+                }
+                setIsWiping(true);
+                try {
+                  const enteredHash = await hashPassword(adminPasscodeInput.trim());
+                  if (enteredHash !== currentAuth.pwHash) {
+                    setWipeError('❌ Incorrect Admin Passcode! Verification failed.');
+                    setIsWiping(false);
+                    return;
+                  }
+                  // Verification Passed!
+                  setIsWipeModalOpen(false);
+                  setAdminPasscodeInput('');
+                  setWipeError(null);
+                  onClearAllData();
+                } catch (err: any) {
+                  setWipeError('Verification error. Please try again.');
+                } finally {
+                  setIsWiping(false);
+                }
+              }}
+              className="p-5 space-y-4"
+            >
+              {/* Danger Warning Box */}
+              <div className="p-3.5 bg-rose-50/70 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/30 rounded-2xl">
+                <p className="text-xs text-rose-800 dark:text-rose-300 leading-relaxed font-bold">
+                  ⚠️ <span className="font-black underline">WARNING:</span> This action will permanently erase all sales invoices, inventory items, customer credit accounts, supplier records, and transaction ledgers on this device.
+                </p>
+              </div>
+
+              {/* Passcode Input */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-black text-slate-700 dark:text-slate-300 uppercase tracking-wider block">
+                  Enter Admin Passcode to Confirm
+                </label>
+                <div className="relative">
+                  <input
+                    type={showWipePasscode ? 'text' : 'password'}
+                    value={adminPasscodeInput}
+                    onChange={(e) => {
+                      setAdminPasscodeInput(e.target.value);
+                      if (wipeError) setWipeError(null);
+                    }}
+                    placeholder="Enter Admin Master Passcode"
+                    autoFocus
+                    required
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-200 outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20 font-bold transition-all pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowWipePasscode(!showWipePasscode)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 cursor-pointer"
+                    tabIndex={-1}
+                  >
+                    {showWipePasscode ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Error feedback */}
+              {wipeError && (
+                <div className="p-2.5 bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-300 text-xs font-black rounded-xl border border-red-200 dark:border-red-800 animate-in fade-in flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-red-600" />
+                  <span>{wipeError}</span>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="pt-2 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsWipeModalOpen(false);
+                    setAdminPasscodeInput('');
+                    setWipeError(null);
+                  }}
+                  className="px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isWiping}
+                  className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-black uppercase tracking-wider rounded-xl flex items-center gap-1.5 shadow-md shadow-rose-600/20 cursor-pointer transition-all disabled:opacity-50"
+                >
+                  <Trash className="w-4 h-4" />
+                  <span>{isWiping ? 'Verifying...' : 'Confirm Factory Reset'}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

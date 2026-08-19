@@ -77,6 +77,8 @@ export interface Sale {
   creditCustId: string | null;
   pointsRedeemed?: number;
   interStateGst?: boolean; // toggle to split CGST/SGST or apply full IGST
+  upiTxnId?: string; // UPI Transaction Reference / UTR Number
+  createdAt?: string | number;
 }
 
 export interface KhataEntry {
@@ -140,6 +142,8 @@ export interface Staff {
   role: string;
   phone: string;
   pin?: string;
+  fpId?: string | null;
+  biometricEnabled?: boolean;
 }
 
 export interface StaffActivityLog {
@@ -267,4 +271,21 @@ export interface AppDatabase {
   branches?: Branch[];
   activeBranchId?: string;
   staffActivityLogs?: StaffActivityLog[];
+}
+
+export type DashboardWidgetId =
+  | 'store_profile'
+  | 'alerts_banners'
+  | 'summary_cards'
+  | 'daily_sales_chart'
+  | 'quick_actions'
+  | 'predictive_alerts'
+  | 'recent_transactions';
+
+export interface DashboardWidgetConfig {
+  id: DashboardWidgetId;
+  name: string;
+  description: string;
+  iconName: string;
+  visible: boolean;
 }

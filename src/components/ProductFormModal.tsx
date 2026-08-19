@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
-import { X, Save, Trash, Scan, Sparkles, Image, Tag, MapPin, Percent, DollarSign, Layers } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Save, Trash, Scan, Sparkles, Image, Tag, MapPin, Percent, DollarSign, Layers, Camera, Upload } from 'lucide-react';
 import { Product, Supplier } from '../types';
 import { useDialog } from '../context/DialogContext';
 import { saveProductImageToAppFolder } from '../services/nativeStorage';
@@ -314,8 +314,8 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
             </div>
 
             {/* Product Image preview & uploader combo */}
-            <div className="flex items-center gap-4 bg-slate-50 dark:bg-slate-800/40 p-3 rounded-xl border border-slate-150 dark:border-slate-800">
-              <div className="relative w-16 h-16 bg-slate-200 dark:bg-slate-800 rounded-lg flex items-center justify-center overflow-hidden border border-slate-300 dark:border-slate-700 shrink-0">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 bg-slate-50 dark:bg-slate-800/40 p-3 rounded-xl border border-slate-150 dark:border-slate-800">
+              <div className="relative w-16 h-16 bg-slate-200 dark:bg-slate-800 rounded-xl flex items-center justify-center overflow-hidden border border-slate-300 dark:border-slate-700 shrink-0">
                 {image ? (
                   <img src={image} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                 ) : (
@@ -325,18 +325,40 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setImage('')}
-                    className="absolute top-0.5 right-0.5 bg-slate-900/85 text-white p-0.5 rounded-full text-[8px]"
+                    className="absolute top-1 right-1 bg-slate-900/90 text-white w-4 h-4 rounded-full text-[9px] flex items-center justify-center hover:bg-rose-600 transition-colors"
                   >
                     ✕
                   </button>
                 )}
               </div>
               <div className="flex-1 min-w-0">
-                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Product Media Image</span>
-                <label className="inline-block bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[10px] font-black uppercase tracking-wider px-3 py-1.5 rounded-lg cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
-                  Upload Photo
-                  <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
-                </label>
+                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">
+                  Product Image (Camera / Gallery)
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  <label className="bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-lg cursor-pointer flex items-center gap-1.5 transition-colors shadow-xs">
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>Take Photo</span>
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      capture="environment" 
+                      onChange={handleImageUpload} 
+                      className="hidden" 
+                    />
+                  </label>
+
+                  <label className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-lg cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center gap-1.5 transition-colors">
+                    <Upload className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Choose Gallery</span>
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      onChange={handleImageUpload} 
+                      className="hidden" 
+                    />
+                  </label>
+                </div>
               </div>
             </div>
 

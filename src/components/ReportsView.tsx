@@ -6,7 +6,7 @@
 import React, { useState } from 'react';
 import { BarChart3, Download, TrendingUp, TrendingDown, DollarSign, Calendar, RefreshCcw, LogOut, Presentation } from 'lucide-react';
 import { AppDatabase, Sale, Expense } from '../types';
-import { formatCurrency, getTodayDateString, formatDate } from '../utils';
+import { formatCurrency, getTodayDateString, formatDate, getDateString, parseDateString, isSameDate, computeSaleProfit } from '../utils';
 import { useTranslation } from '../context/LocalizationContext';
 import { useDialog } from '../context/DialogContext';
 import {
@@ -113,22 +113,27 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     today.setHours(0, 0, 0, 0);
 
     return sales.filter(s => {
-      const d = new Date(s.date + 'T00:00:00');
-      if (period === 'today') return s.date === todayStr;
+      if (period === 'all') return true;
+      const cleanDate = parseDateString(s.date);
+      if (period === 'today') return cleanDate === todayStr;
+
+      const [y, m, d] = cleanDate.split('-').map(Number);
+      if (!y || !m || !d) return false;
+      const saleDate = new Date(y, m - 1, d);
+      saleDate.setHours(0, 0, 0, 0);
+
       if (period === 'week') {
         const threshold = new Date(today);
         threshold.setDate(threshold.getDate() - 6);
-        return d >= threshold;
+        return saleDate >= threshold;
       }
       if (period === 'month') {
-        const threshold = new Date(today);
-        threshold.setDate(1); // Start of month
-        return d >= threshold;
+        const threshold = new Date(today.getFullYear(), today.getMonth(), 1);
+        return saleDate >= threshold;
       }
       if (period === 'year') {
-        const threshold = new Date(today);
-        threshold.setMonth(0, 1); // Start of year
-        return d >= threshold;
+        const threshold = new Date(today.getFullYear(), 0, 1);
+        return saleDate >= threshold;
       }
       return true; // For All Time
     });
@@ -137,20 +142,20 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const periodSales = period === 'daily' ? [] : getPeriodSales();
   
   // Totals computation
-  const totalRevenue = periodSales.reduce((a, s) => a + s.total, 0);
-  const totalProfit = periodSales.reduce((a, s) => a + (s.profit || 0), 0);
+  const totalRevenue = periodSales.reduce((a, s) => a + (Number(s.total) || 0), 0);
+  const totalProfit = periodSales.reduce((a, s) => a + computeSaleProfit(s), 0);
   const totalBills = periodSales.length;
   const averageBill = totalBills > 0 ? totalRevenue / totalBills : 0;
 
   // Track top-selling goods
   const productSalesMap: { [name: string]: { qty: number; rev: number } } = {};
   periodSales.forEach(s => {
-    s.items.forEach(i => {
+    (s.items || []).forEach(i => {
       if (!productSalesMap[i.name]) {
         productSalesMap[i.name] = { qty: 0, rev: 0 };
       }
-      productSalesMap[i.name].qty += i.qty;
-      productSalesMap[i.name].rev += i.price * i.qty;
+      productSalesMap[i.name].qty += (Number(i.qty) || 0);
+      productSalesMap[i.name].rev += (Number(i.price) || 0) * (Number(i.qty) || 0);
     });
   });
   const bestSellers = Object.entries(productSalesMap)
@@ -162,11 +167,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   periodSales.forEach(s => {
     if (s.paymentMethod === 'split') {
       const split = s.splitDetails || { cashAmount: 0, upiAmount: 0 };
-      paymentsMap['cash'] = (paymentsMap['cash'] || 0) + split.cashAmount;
-      paymentsMap['upi'] = (paymentsMap['upi'] || 0) + split.upiAmount;
+      paymentsMap['cash'] = (paymentsMap['cash'] || 0) + (Number(split.cashAmount) || 0);
+      paymentsMap['upi'] = (paymentsMap['upi'] || 0) + (Number(split.upiAmount) || 0);
     } else {
       const m = s.paymentMethod || 'cash';
-      paymentsMap[m] = (paymentsMap[m] || 0) + s.total;
+      paymentsMap[m] = (paymentsMap[m] || 0) + (Number(s.total) || 0);
     }
   });
 
@@ -178,7 +183,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         staffScoreMap[s.staffName] = { bills: 0, rev: 0 };
       }
       staffScoreMap[s.staffName].bills++;
-      staffScoreMap[s.staffName].rev += s.total;
+      staffScoreMap[s.staffName].rev += (Number(s.total) || 0);
     }
   });
 
@@ -187,9 +192,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   for (let i = 6; i >= 0; i--) {
     const d = new Date();
     d.setDate(d.getDate() - i);
-    const dateStr = d.toISOString().split('T')[0];
-    const localDaySales = sales.filter(x => x.date === dateStr);
-    const val = localDaySales.reduce((a, s) => a + s.total, 0);
+    const dateStr = getDateString(d);
+    const localDaySales = sales.filter(x => isSameDate(x.date, dateStr));
+    const val = localDaySales.reduce((a, s) => a + (Number(s.total) || 0), 0);
     
     barChartData.push({
       label: d.toLocaleDateString('en-IN', { weekday: 'short' }),
@@ -203,19 +208,21 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const dailyIndexesMap: { [date: string]: { rev: number; profit: number; exp: number; bills: number } } = {};
   
   sales.forEach(s => {
-    if (!dailyIndexesMap[s.date]) {
-      dailyIndexesMap[s.date] = { rev: 0, profit: 0, exp: 0, bills: 0 };
+    const dateKey = parseDateString(s.date) || todayStr;
+    if (!dailyIndexesMap[dateKey]) {
+      dailyIndexesMap[dateKey] = { rev: 0, profit: 0, exp: 0, bills: 0 };
     }
-    dailyIndexesMap[s.date].rev += s.total;
-    dailyIndexesMap[s.date].profit += (s.profit || 0);
-    dailyIndexesMap[s.date].bills++;
+    dailyIndexesMap[dateKey].rev += (Number(s.total) || 0);
+    dailyIndexesMap[dateKey].profit += computeSaleProfit(s);
+    dailyIndexesMap[dateKey].bills++;
   });
 
   expenses.forEach(e => {
-    if (!dailyIndexesMap[e.date]) {
-      dailyIndexesMap[e.date] = { rev: 0, profit: 0, exp: 0, bills: 0 };
+    const dateKey = parseDateString(e.date) || todayStr;
+    if (!dailyIndexesMap[dateKey]) {
+      dailyIndexesMap[dateKey] = { rev: 0, profit: 0, exp: 0, bills: 0 };
     }
-    dailyIndexesMap[e.date].exp += e.amount;
+    dailyIndexesMap[dateKey].exp += (Number(e.amount) || 0);
   });
 
   const dailyLogDates = Object.keys(dailyIndexesMap).sort((a, b) => b.localeCompare(a));

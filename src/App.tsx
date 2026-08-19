@@ -31,7 +31,8 @@ import {
   Calculator,
   FileText,
   ArrowLeft,
-  BookOpen
+  BookOpen,
+  RotateCcw
 } from 'lucide-react';
 
 import { AppDatabase, Product, Sale, Customer, Expense, Supplier, Staff, Settings, SaleItem, PurchaseItem } from './types';
@@ -43,7 +44,7 @@ import {
   createDefaultDatabase,
   hashPassword 
 } from './db';
-import { generateId, getTodayDateString, formatCurrency, playBeepSound, computePredictiveAlerts, translate, formatDate, formatHeaderDate } from './utils';
+import { generateId, getTodayDateString, formatCurrency, playBeepSound, computePredictiveAlerts, translate, formatDate, formatHeaderDate, compareSales, isSameDate } from './utils';
 import { LocalizationProvider } from './context/LocalizationContext';
 import { initAppStorage } from './services/nativeStorage';
 import { checkBiometricsAvailability, authenticateWithNativeBiometrics } from './services/biometricService';
@@ -202,6 +203,87 @@ export default function App() {
   const isScanningBarcodeProcessingRef = useRef<boolean>(false);
   const toastTimerRef = useRef<any>(null);
 
+  // ════════════════════════════════════════
+  // MIDNIGHT & DAY-CHANGE SESSION HELPERS
+  // ════════════════════════════════════════
+  const calculateNextMidnightMs = (baseDate = new Date()): number => {
+    const nextMidnight = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + 1, 0, 0, 0, 0);
+    return nextMidnight.getTime();
+  };
+
+  const establishSession = (customExpiresAt?: number): { sessionDate: string; expiresAt: number } => {
+    const todayStr = getTodayDateString();
+    const expiresAt = customExpiresAt || calculateNextMidnightMs();
+
+    localStorage.setItem('sp_session', '1');
+    localStorage.setItem('sp_session_date', todayStr);
+    localStorage.setItem('sp_session_expires_at', String(expiresAt));
+    localStorage.setItem('sp_session_login_time', String(Date.now()));
+
+    return { sessionDate: todayStr, expiresAt };
+  };
+
+  const clearSessionData = () => {
+    localStorage.removeItem('sp_session');
+    localStorage.removeItem('sp_session_date');
+    localStorage.removeItem('sp_session_expires_at');
+    localStorage.removeItem('sp_session_login_time');
+    localStorage.removeItem('shoppos_active_staff_id');
+  };
+
+  const validateStoredSession = (autoLogoutEnabled: boolean = true): {
+    isValid: boolean;
+    reason?: string;
+    sessionDate?: string;
+    expiresAt?: number;
+  } => {
+    const hasSession = localStorage.getItem('sp_session');
+    if (!hasSession) {
+      return { isValid: false };
+    }
+
+    // If auto-logout on day change is explicitly disabled by admin, keep session alive
+    if (!autoLogoutEnabled) {
+      return { isValid: true };
+    }
+
+    const storedSessionDate = localStorage.getItem('sp_session_date');
+    const storedExpiresAtStr = localStorage.getItem('sp_session_expires_at');
+    const storedExpiresAt = storedExpiresAtStr ? Number(storedExpiresAtStr) : null;
+    const todayDate = getTodayDateString();
+    const nowMs = Date.now();
+
+    // 1. Session belongs to a previous date / day (e.g. app was closed overnight)
+    if (storedSessionDate && storedSessionDate !== todayDate) {
+      return {
+        isValid: false,
+        reason: '📅 Session was automatically signed out due to Date Change (Midnight Rollover) for clean daily ledger & inventory synchronization.'
+      };
+    }
+
+    // 2. Midnight expiration timestamp or snooze deadline has passed
+    if (storedExpiresAt && nowMs >= storedExpiresAt) {
+      return {
+        isValid: false,
+        reason: '📅 Session was automatically signed out due to Date Change (Midnight Rollover) for clean daily ledger & inventory synchronization.'
+      };
+    }
+
+    // 3. Fallback: if session was set but metadata missing, initialize today's date and next midnight
+    if (!storedSessionDate) {
+      localStorage.setItem('sp_session_date', todayDate);
+      const midnight = calculateNextMidnightMs();
+      localStorage.setItem('sp_session_expires_at', String(midnight));
+      return { isValid: true, sessionDate: todayDate, expiresAt: midnight };
+    }
+
+    return {
+      isValid: true,
+      sessionDate: storedSessionDate,
+      expiresAt: storedExpiresAt || calculateNextMidnightMs()
+    };
+  };
+
   const showToast = useCallback((message: string, durationMs = 2500) => {
     const toast = document.getElementById('toast');
     if (!toast) return;
@@ -294,21 +376,27 @@ export default function App() {
     });
   };
 
-  // Sync return quantities on opening a return bill modal
+  const handleOpenReturnModal = (saleId: string, fullReturn: boolean = false) => {
+    const sale = db.sales.find(s => s.id === saleId);
+    if (!sale) return;
+
+    const initialQtys: Record<string, number> = {};
+    sale.items.forEach(item => {
+      const alreadyReturned = item.returnedQty || 0;
+      const maxAllowed = Math.max(0, item.qty - alreadyReturned);
+      initialQtys[item.id] = fullReturn ? maxAllowed : 0;
+    });
+
+    setReturnQtys(initialQtys);
+    setReturnBillId(saleId);
+  };
+
+  // Clear return quantities on closing a return bill modal
   useEffect(() => {
-    if (returnBillId && db) {
-      const sale = db.sales.find(s => s.id === returnBillId);
-      if (sale) {
-        const initialQtys: Record<string, number> = {};
-        sale.items.forEach(item => {
-          initialQtys[item.id] = 0;
-        });
-        setReturnQtys(initialQtys);
-      }
-    } else {
+    if (!returnBillId) {
       setReturnQtys({});
     }
-  }, [returnBillId, db]);
+  }, [returnBillId]);
 
   // Auto-Lock Inactivity effect
   const autoLockTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -818,7 +906,10 @@ export default function App() {
     if (showBiometricScanOverlay) {
       const timer = setTimeout(() => {
         setShowBiometricScanOverlay(false);
-        localStorage.setItem('sp_session', '1');
+        const { sessionDate } = establishSession();
+        sessionDateRef.current = sessionDate;
+        snoozeUntilMsRef.current = null;
+        setSessionLogoutReason(null);
         setIsAuthenticated(true);
         setLoginError('');
       }, 1800);
@@ -852,9 +943,29 @@ export default function App() {
         const stats = await estimateStorage();
         setStorageStats(stats);
 
-        // Session recovery on browser refreshes
-        if (localStorage.getItem('sp_session')) {
+        // Session validation on startup / browser refresh (Enforces midnight logout if app was closed)
+        const autoLogout = localData.settings?.autoLogoutOnDayChange !== false;
+        const sessionCheck = validateStoredSession(autoLogout);
+
+        if (sessionCheck.isValid) {
+          sessionDateRef.current = sessionCheck.sessionDate || getTodayDateString();
+          if (sessionCheck.expiresAt && sessionCheck.expiresAt > Date.now()) {
+            const defaultMidnight = calculateNextMidnightMs();
+            if (sessionCheck.expiresAt > defaultMidnight) {
+              snoozeUntilMsRef.current = sessionCheck.expiresAt;
+            }
+          }
           setIsAuthenticated(true);
+        } else {
+          // If session expired while closed, clean up local session storage and display reason
+          if (localStorage.getItem('sp_session')) {
+            clearSessionData();
+            setActiveStaffId(null);
+            if (sessionCheck.reason) {
+              setSessionLogoutReason(sessionCheck.reason);
+            }
+          }
+          setIsAuthenticated(false);
         }
       } catch (err) {
         console.error('Local databases init failed:', err);
@@ -939,19 +1050,26 @@ export default function App() {
 
       const now = new Date();
       const currentCalDate = getTodayDateString();
+      const storedSessionDate = localStorage.getItem('sp_session_date');
+      const storedExpiresAt = Number(localStorage.getItem('sp_session_expires_at'));
 
-      // 1. Calendar date rolled over past midnight
-      if (sessionDateRef.current && sessionDateRef.current !== currentCalDate) {
+      // 1. Calendar date rolled over past midnight (or differs from active session date)
+      if (
+        (sessionDateRef.current && sessionDateRef.current !== currentCalDate) ||
+        (storedSessionDate && storedSessionDate !== currentCalDate)
+      ) {
         performDayChangeLogout();
         return;
       }
 
-      // 2. Time remaining until next midnight (00:00:00)
+      // 2. Time remaining until next midnight (00:00:00) or snooze deadline
       const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
       let targetDeadlineMs = nextMidnight.getTime();
 
       if (snoozeUntilMsRef.current && snoozeUntilMsRef.current > targetDeadlineMs) {
         targetDeadlineMs = snoozeUntilMsRef.current;
+      } else if (storedExpiresAt && storedExpiresAt > targetDeadlineMs) {
+        targetDeadlineMs = storedExpiresAt;
       }
 
       const msRemaining = targetDeadlineMs - now.getTime();
@@ -990,12 +1108,33 @@ export default function App() {
 
     const handleFocusCheck = () => checkMidnightAndDayChange();
     window.addEventListener('focus', handleFocusCheck);
+    window.addEventListener('pageshow', handleFocusCheck);
     document.addEventListener('visibilitychange', handleFocusCheck);
+
+    // If running in Capacitor / Mobile native shell, listen for app state resume
+    let appStateListenerHandle: any = null;
+    if (Capacitor.isNativePlatform()) {
+      try {
+        CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+          if (isActive) {
+            checkMidnightAndDayChange();
+          }
+        }).then(handle => {
+          appStateListenerHandle = handle;
+        }).catch(() => {});
+      } catch (e) {
+        // ignore
+      }
+    }
 
     return () => {
       clearInterval(interval);
       window.removeEventListener('focus', handleFocusCheck);
+      window.removeEventListener('pageshow', handleFocusCheck);
       document.removeEventListener('visibilitychange', handleFocusCheck);
+      if (appStateListenerHandle && typeof appStateListenerHandle.remove === 'function') {
+        appStateListenerHandle.remove();
+      }
     };
   }, [isAuthenticated, db?.settings?.autoLogoutOnDayChange, db?.settings?.dayChangeWarningMinutes, isSimulatedWarningTest]);
 
@@ -1088,8 +1227,8 @@ export default function App() {
       };
       await triggerSave(updated);
       
-      localStorage.setItem('sp_session', '1');
-      sessionDateRef.current = getTodayDateString();
+      const { sessionDate } = establishSession();
+      sessionDateRef.current = sessionDate;
       snoozeUntilMsRef.current = null;
       setSessionLogoutReason(null);
       setIsAuthenticated(true);
@@ -1131,12 +1270,14 @@ export default function App() {
         ...db.auth,
         userId: data.auth.userId ? data.auth.userId.trim() : 'admin',
         pwHash: hashed,
+        fpId: data.auth.fpId || null,
+        rpId: data.auth.rpId || null,
         firstLogin: false,
       }
     };
     await triggerSave(updated);
-    localStorage.setItem('sp_session', '1');
-    sessionDateRef.current = getTodayDateString();
+    const { sessionDate } = establishSession();
+    sessionDateRef.current = sessionDate;
     snoozeUntilMsRef.current = null;
     setSessionLogoutReason(null);
     setIsAuthenticated(true);
@@ -1146,7 +1287,7 @@ export default function App() {
     if (activeStaffIdRef.current) {
       handleSelectActiveStaff(null);
     }
-    localStorage.removeItem('sp_session');
+    clearSessionData();
     setIsAuthenticated(false);
     setIsDayChangeWarningOpen(false);
     setDayChangeCountdownSecs(null);
@@ -1157,7 +1298,7 @@ export default function App() {
     if (activeStaffIdRef.current) {
       handleSelectActiveStaff(null);
     }
-    localStorage.removeItem('sp_session');
+    clearSessionData();
     setIsAuthenticated(false);
     setIsDayChangeWarningOpen(false);
     setDayChangeCountdownSecs(null);
@@ -1171,6 +1312,7 @@ export default function App() {
   const handleSnoozeDayChangeLogout = (minutes: number = 15) => {
     const newDeadline = Date.now() + minutes * 60 * 1000;
     snoozeUntilMsRef.current = newDeadline;
+    localStorage.setItem('sp_session_expires_at', String(newDeadline));
     setIsDayChangeWarningOpen(false);
     
     const newTimeStr = new Date(newDeadline).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
@@ -1314,6 +1456,27 @@ export default function App() {
 
     if (product && targetQty > product.qty && product.qty > 0) {
       await showAlert(`⚠️ Only ${product.qty} units left in stock.`, 'Stock Limit');
+      return;
+    }
+
+    setCart(cart.map(i => i.id === id ? { ...i, qty: targetQty } : i));
+  };
+
+  const handleSetCartQty = async (id: string, newQty: number) => {
+    const existing = cart.find(i => i.id === id);
+    if (!existing) return;
+
+    if (isNaN(newQty) || newQty <= 0) {
+      handleRemoveFromCart(id);
+      return;
+    }
+
+    const product = db.products.find(p => p.id === id);
+    const targetQty = Math.max(1, Math.floor(newQty));
+
+    if (product && targetQty > product.qty && product.qty > 0) {
+      await showAlert(`⚠️ Only ${product.qty} units left in stock. Setting quantity to maximum available (${product.qty}).`, 'Stock Limit');
+      setCart(cart.map(i => i.id === id ? { ...i, qty: product.qty } : i));
       return;
     }
 
@@ -2085,12 +2248,10 @@ export default function App() {
   };
 
   const handleClearResetDB = async () => {
-    if (await showConfirm('Permanently clear and wipe all sales, inventory products, ledgers, and cash balances?', 'Factory Clear Database')) {
-      const empty = await createDefaultDatabase();
-      await triggerSave(empty);
-      await showAlert('POS databases successfully formatted.', 'Database Formatted');
-      setActiveTab('dashboard');
-    }
+    const empty = await createDefaultDatabase();
+    await triggerSave(empty);
+    await showAlert('POS databases successfully formatted and reset.', 'Database Formatted');
+    setActiveTab('dashboard');
   };
 
   const lowStockCount = db.products.filter(p => {
@@ -2541,8 +2702,8 @@ export default function App() {
               if (db.auth.fpId === 'native_biometric') {
                 const authRes = await authenticateWithNativeBiometrics('Scan fingerprint or face to unlock ShopPOS Pro');
                 if (authRes.success) {
-                  localStorage.setItem('sp_session', '1');
-                  sessionDateRef.current = getTodayDateString();
+                  const { sessionDate } = establishSession();
+                  sessionDateRef.current = sessionDate;
                   snoozeUntilMsRef.current = null;
                   setSessionLogoutReason(null);
                   setIsAuthenticated(true);
@@ -2574,8 +2735,8 @@ export default function App() {
                 });
 
                 if (authCr) {
-                  localStorage.setItem('sp_session', '1');
-                  sessionDateRef.current = getTodayDateString();
+                  const { sessionDate } = establishSession();
+                  sessionDateRef.current = sessionDate;
                   snoozeUntilMsRef.current = null;
                   setSessionLogoutReason(null);
                   setIsAuthenticated(true);
@@ -2894,6 +3055,7 @@ export default function App() {
                 onAddToCart={handleAddToCart}
                 onRemoveFromCart={handleRemoveFromCart}
                 onChangeCartQty={handleChangeCartQty}
+                onSetCartQty={handleSetCartQty}
                 onClearCart={on_billing_clear_cart}
                 onOpenScanner={() => {
                   setScannerMode('bill');
@@ -2927,6 +3089,7 @@ export default function App() {
               <InventoryView 
                 products={db.products}
                 suppliers={db.suppliers}
+                sales={db.sales}
                 onOpenProductModal={(id) => {
                   setActiveProductId(id);
                   setIsProductModalOpen(true);
@@ -2976,7 +3139,7 @@ export default function App() {
                 db={db}
                 onOpenDayDetails={setDayDetailsDate}
                 onExportCSV={handleExportCSV}
-                onOpenReturnModal={setReturnBillId}
+                onOpenReturnModal={(saleId) => handleOpenReturnModal(saleId, false)}
               />
             )}
 
@@ -3129,6 +3292,7 @@ export default function App() {
               settings={db.settings}
               onClose={() => setIsCheckoutOpen(false)}
               onComplete={handleCompleteCheckout}
+              onUpdateSettings={handleSaveShopInfo}
               onShowUPIQR={async (amt) => {
                 if (!db.settings.upi) {
                   await showAlert('⚠️ UPI Merchant ID is empty. Please set your UPI ID in Settings to generate QR codes.', 'UPI ID Missing');
@@ -3203,6 +3367,7 @@ export default function App() {
               onSaveSupplier={handleSaveSupplier}
               onDeleteSupplier={handleDeleteSupplier}
               onSavePurchaseOrder={handleSavePurchaseOrder}
+              currency={db.settings.currency || 'Rs.'}
             />
           )}
 
@@ -3296,11 +3461,48 @@ export default function App() {
                   <X className="w-4 h-4" />
                 </button>
 
-                <div>
-                  <h3 className="text-base font-black text-slate-900">Process Product Return</h3>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
-                    Invoice #{db.sales.find(s => s.id === returnBillId)?.billNo}
-                  </p>
+                <div className="flex items-center justify-between gap-2 pr-6">
+                  <div>
+                    <h3 className="text-base font-black text-slate-900">Process Product Return</h3>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                      Invoice #{db.sales.find(s => s.id === returnBillId)?.billNo}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const sale = db.sales.find(s => s.id === returnBillId);
+                        if (!sale) return;
+                        const allQtys: Record<string, number> = {};
+                        sale.items.forEach(item => {
+                          const alreadyReturned = item.returnedQty || 0;
+                          allQtys[item.id] = Math.max(0, item.qty - alreadyReturned);
+                        });
+                        setReturnQtys(allQtys);
+                      }}
+                      className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-[9px] font-black uppercase rounded-lg cursor-pointer transition-colors"
+                      title="Set all items to maximum returnable quantity"
+                    >
+                      ⚡ All Items
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const sale = db.sales.find(s => s.id === returnBillId);
+                        if (!sale) return;
+                        const zeroQtys: Record<string, number> = {};
+                        sale.items.forEach(item => {
+                          zeroQtys[item.id] = 0;
+                        });
+                        setReturnQtys(zeroQtys);
+                      }}
+                      className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-500 text-[9px] font-black uppercase rounded-lg cursor-pointer transition-colors"
+                      title="Reset all return quantities to 0"
+                    >
+                      Clear
+                    </button>
+                  </div>
                 </div>
 
                 <div className="space-y-3">
@@ -3800,31 +4002,19 @@ export default function App() {
 
   function db_history_renderer() {
     const list = [...db.sales].filter(s => !s.voided);
-    const filtered = searchHistoryQuery.trim().toLowerCase()
-      ? list.filter(s => String(s.billNo).toLowerCase().includes(searchHistoryQuery.toLowerCase()) || s.customer.toLowerCase().includes(searchHistoryQuery.toLowerCase()) || s.date.includes(searchHistoryQuery))
+    const searchClean = searchHistoryQuery.trim().toLowerCase();
+    const filtered = searchClean
+      ? list.filter(s => 
+          String(s.billNo).toLowerCase().includes(searchClean) || 
+          (s.customer || '').toLowerCase().includes(searchClean) || 
+          (s.date || '').toLowerCase().includes(searchClean) ||
+          formatDate(s.date).toLowerCase().includes(searchClean) ||
+          (s.time || '').toLowerCase().includes(searchClean)
+        )
       : list;
 
-    // Apply sorting
-    const sorted = [...filtered].sort((a, b) => {
-      let comparison = 0;
-      if (historySortBy === 'date') {
-        const dateA = a.date + ' ' + (a.time || '');
-        const dateB = b.date + ' ' + (b.time || '');
-        comparison = dateA.localeCompare(dateB);
-        if (comparison === 0) {
-          // Fallback to billNo comparison
-          comparison = String(a.billNo).localeCompare(String(b.billNo));
-        }
-      } else if (historySortBy === 'amount') {
-        comparison = a.total - b.total;
-      } else if (historySortBy === 'customer') {
-        const nameA = a.customer || 'Walk-in';
-        const nameB = b.customer || 'Walk-in';
-        comparison = nameA.localeCompare(nameB);
-      }
-
-      return historySortOrder === 'asc' ? comparison : -comparison;
-    });
+    // Apply accurate sorting using compareSales
+    const sorted = [...filtered].sort((a, b) => compareSales(a, b, historySortBy, historySortOrder));
 
     return sorted.length > 0 ? (
       <div className="space-y-2">
@@ -3840,17 +4030,17 @@ export default function App() {
               setIsHistoryOpen(false);
               setActiveBillDetailsId(s.id);
             }}
-            className="w-full text-left bg-slate-50 hover:bg-slate-100/90 rounded-xl p-2.5 border border-slate-150 flex justify-between items-center transition-all cursor-pointer"
+            className="w-full text-left bg-slate-50 hover:bg-slate-100/90 dark:bg-slate-900/90 dark:hover:bg-slate-850 rounded-xl p-2.5 border border-slate-150 dark:border-slate-800 flex justify-between items-center transition-all cursor-pointer"
           >
             <div>
-              <div className="text-xs font-black text-slate-800">
-                Invoice #{s.billNo} • <span className="text-slate-500 font-bold">{s.customer || 'Walk-in'}</span>
+              <div className="text-xs font-black text-slate-800 dark:text-slate-100">
+                Invoice #{s.billNo} • <span className="text-slate-500 dark:text-slate-400 font-bold">{s.customer || 'Walk-in'}</span>
               </div>
-              <p className="text-[9px] text-slate-400 mt-1 font-semibold">
-                {formatDate(s.date)} • {s.items.length} units • {s.paymentMethod}
+              <p className="text-[9px] text-slate-400 dark:text-slate-500 mt-1 font-semibold">
+                {formatDate(s.date)}{s.time ? ` ${s.time}` : ''} • {s.items.length} {s.items.length === 1 ? 'item' : 'items'} • <span className="capitalize">{s.paymentMethod}</span>
               </p>
             </div>
-            <span className="font-black text-xs text-indigo-700 font-mono">Rs.{formatCurrency(s.total)}</span>
+            <span className="font-black text-xs text-indigo-700 dark:text-indigo-400 font-mono">Rs.{formatCurrency(s.total)}</span>
           </motion.button>
         ))}
       </div>
@@ -3913,16 +4103,56 @@ export default function App() {
         )}
 
         {!bill.voided && (
-          <button
-            type="button"
-            onClick={() => {
-              setActiveBillDetailsId(null);
-              setReturnBillId(bill.id);
-            }}
-            className="w-full py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-black uppercase rounded-lg cursor-pointer flex items-center justify-center gap-1.5"
-          >
-            ↩ Return/Refund Products
-          </button>
+          <div className="space-y-2">
+            {(() => {
+              const remainingItems = bill.items.map(item => {
+                const alreadyReturned = item.returnedQty || 0;
+                const maxAllowed = Math.max(0, item.qty - alreadyReturned);
+                return { item, maxAllowed };
+              });
+              const totalRemainingQty = remainingItems.reduce((sum, r) => sum + r.maxAllowed, 0);
+              const isFullyReturned = totalRemainingQty === 0;
+
+              if (isFullyReturned) {
+                return (
+                  <div className="w-full py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs font-black uppercase rounded-xl text-center border border-dashed border-slate-200 dark:border-slate-700 select-none flex items-center justify-center gap-1.5">
+                    <span>✅ All Items Fully Returned</span>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="space-y-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveBillDetailsId(null);
+                      handleOpenReturnModal(bill.id, true);
+                    }}
+                    className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white text-xs font-black uppercase tracking-wider rounded-xl cursor-pointer flex items-center justify-center gap-2 shadow-sm active:scale-95 transition-all"
+                    title="Automatically populate return for the complete bill"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>One-Click Return (Entire Bill)</span>
+                    <span className="text-[10px] bg-black/20 text-amber-100 px-2 py-0.5 rounded-full font-black ml-0.5">
+                      {totalRemainingQty} {totalRemainingQty === 1 ? 'item' : 'items'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveBillDetailsId(null);
+                      handleOpenReturnModal(bill.id, false);
+                    }}
+                    className="w-full py-1 text-[10px] font-bold text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 underline uppercase tracking-wider text-center cursor-pointer block"
+                  >
+                    ↩ Partial Return (Select Individual Items)
+                  </button>
+                </div>
+              );
+            })()}
+          </div>
         )}
 
         <div className="flex gap-2">
@@ -3951,11 +4181,13 @@ export default function App() {
   }
 
   function render_day_details_rows(date: string) {
-    const list = db.sales.filter(s => s.date === date && !s.voided);
+    const list = db.sales
+      .filter(s => isSameDate(s.date, date) && !s.voided)
+      .sort((a, b) => compareSales(a, b, 'date', 'desc'));
     const rev = list.reduce((a, s) => a + s.total, 0);
     const prof = list.reduce((a, s) => a + (s.profit || 0), 0);
 
-    const de = db.expenses.filter(e => e.date === date);
+    const de = db.expenses.filter(e => isSameDate(e.date, date));
     const te = de.reduce((a, e) => a + e.amount, 0);
 
     const formattedDate = formatDate(date);
@@ -4011,7 +4243,7 @@ export default function App() {
             >
               <div>
                 <span className="text-xs font-black text-slate-800">Bill #{s.billNo} • {s.customer || 'Walk-in'}</span>
-                <span className="text-[9px] text-slate-400 block mt-0.5 font-semibold">{s.items.length} units • {s.time}</span>
+                <span className="text-[9px] text-slate-400 block mt-0.5 font-semibold">{s.items.length} units • {s.time || ''}</span>
               </div>
               <span className="font-extrabold text-xs text-indigo-700">Rs.{formatCurrency(s.total)}</span>
             </button>

@@ -4,15 +4,18 @@
  */
 
 import React, { useState } from 'react';
-import { Package, Search, Plus, Calendar, AlertTriangle, BadgePercent, Scan, Download, Upload, ArrowUpDown } from 'lucide-react';
-import { Product, Supplier } from '../types';
+import { Package, Search, Plus, Calendar, AlertTriangle, BadgePercent, Scan, Download, Upload, ArrowUpDown, TrendingUp } from 'lucide-react';
+import { Product, Supplier, Sale } from '../types';
 import { formatCurrency, formatDate } from '../utils';
 import { useTranslation } from '../context/LocalizationContext';
 import { useDialog } from '../context/DialogContext';
+import { downloadOrSaveDataFile } from '../services/nativeStorage';
+import { ProductTrendChart } from './ProductTrendChart';
 
 interface InventoryViewProps {
   products: Product[];
   suppliers: Supplier[];
+  sales?: Sale[];
   onOpenProductModal: (productId: string | null) => void;
   onOpenScanner: () => void;
   settings: {
@@ -26,6 +29,7 @@ interface InventoryViewProps {
 export const InventoryView: React.FC<InventoryViewProps> = ({
   products,
   suppliers,
+  sales = [],
   onOpenProductModal,
   onOpenScanner,
   settings,
@@ -37,6 +41,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [search, setSearch] = useState<string>('');
   const [filterTab, setFilterTab] = useState<'all' | 'low' | 'exp' | 'xpd'>('all');
   const [showOnlyLowStock, setShowOnlyLowStock] = useState<boolean>(false);
+  const [show7DayTrends, setShow7DayTrends] = useState<boolean>(() => {
+    return localStorage.getItem('sp_show_7day_trend') !== 'false';
+  });
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkAction, setBulkAction] = useState<'category' | 'discount' | null>(null);
@@ -130,7 +137,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState<number>(0);
   const [viewportHeight, setViewportHeight] = useState<number>(typeof window !== 'undefined' ? window.innerHeight : 800);
-  const ITEM_ESTIMATED_HEIGHT = 126; // Approximate average height of product card in pixels including gap
+  const ITEM_ESTIMATED_HEIGHT = 196; // Approximate average height of product card with trend chart in pixels including gap
   const OVERSCAN = 8; // Number of extra cards to render above & below viewport
 
   React.useEffect(() => {
@@ -297,9 +304,28 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5 justify-start lg:justify-end">
+          {/* 7-Day Trend Toggle Button */}
           <button
             type="button"
             onClick={() => {
+              const next = !show7DayTrends;
+              setShow7DayTrends(next);
+              localStorage.setItem('sp_show_7day_trend', next ? 'true' : 'false');
+            }}
+            className={`flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer active:scale-95 shrink-0 border ${
+              show7DayTrends
+                ? 'bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-600 shadow-xs'
+                : 'bg-white hover:bg-slate-100 dark:bg-slate-900 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800'
+            }`}
+            title="Toggle 7-day stock movement mini-charts on/off for all products"
+          >
+            <TrendingUp className={`w-3 h-3 ${show7DayTrends ? 'text-white' : 'text-indigo-600 dark:text-indigo-400'}`} />
+            <span>7D Trends: {show7DayTrends ? 'ON' : 'OFF'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={async () => {
               const escaped = (txt: string) => {
                 if (!txt) return '';
                 return '"' + txt.replace(/"/g, '""') + '"';
@@ -335,15 +361,19 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 ...rows.map(r => r.join(','))
               ].join('\r\n');
 
-              const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-              const url = URL.createObjectURL(blob);
-              const link = document.createElement('a');
-              link.setAttribute('href', url);
-              link.setAttribute('download', `shoppos_inventory_audit_${new Date().toISOString().slice(0, 10)}.csv`);
-              link.style.visibility = 'hidden';
-              document.body.appendChild(link);
-              link.click();
-              document.body.removeChild(link);
+              const filename = `shoppos_inventory_audit_${new Date().toISOString().slice(0, 10)}.csv`;
+              const res = await downloadOrSaveDataFile({
+                filename,
+                content: csvContent,
+                mimeType: 'text/csv;charset=utf-8;',
+                subfolder: 'Exports'
+              });
+
+              if (res.success) {
+                showAlert(`✅ ${res.message}`, 'Export Complete');
+              } else {
+                showAlert(`❌ ${res.message}`, 'Export Error');
+              }
             }}
             className="flex items-center justify-center gap-1 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer active:scale-95 shrink-0 border border-slate-200"
             title="Export total current inventory to CSV"
@@ -354,17 +384,21 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
           <button
             type="button"
-            onClick={() => {
+            onClick={async () => {
               const dataStr = JSON.stringify(products, null, 2);
-              const blob = new Blob([dataStr], { type: 'application/json' });
-              const url = URL.createObjectURL(blob);
-              const link = document.createElement('a');
-              link.setAttribute('href', url);
-              link.setAttribute('download', `shoppos_inventory_data_backup_${new Date().toISOString().slice(0, 10)}.json`);
-              link.style.display = 'none';
-              document.body.appendChild(link);
-              link.click();
-              document.body.removeChild(link);
+              const filename = `shoppos_inventory_data_backup_${new Date().toISOString().slice(0, 10)}.json`;
+              const res = await downloadOrSaveDataFile({
+                filename,
+                content: dataStr,
+                mimeType: 'application/json',
+                subfolder: 'Exports'
+              });
+
+              if (res.success) {
+                showAlert(`✅ ${res.message}`, 'Backup Complete');
+              } else {
+                showAlert(`❌ ${res.message}`, 'Backup Error');
+              }
             }}
             className="flex items-center justify-center gap-1 px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100/90 text-indigo-700 text-[10px] font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer active:scale-95 shrink-0 border border-indigo-250"
             title="Download complete raw inventory database file for offline restore"
@@ -634,6 +668,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                     </div>
                   </div>
                 </div>
+
+                {/* 7-Day Quantity Movement Recharts Trend Chart */}
+                {show7DayTrends && (
+                  <ProductTrendChart product={p} sales={sales} />
+                )}
 
                 <div className="flex flex-wrap gap-1.5 mt-2 pt-2 border-t border-slate-100 dark:border-slate-800 w-full items-center">
                   <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${

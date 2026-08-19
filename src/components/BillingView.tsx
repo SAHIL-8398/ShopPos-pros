@@ -16,6 +16,7 @@ interface BillingViewProps {
   onAddToCart: (product: Product) => void;
   onRemoveFromCart: (productId: string) => void;
   onChangeCartQty: (productId: string, delta: number) => void;
+  onSetCartQty?: (productId: string, qty: number) => void;
   onClearCart: () => void;
   onOpenScanner: () => void;
   onCheckout: (customerInfo: { name: string; phone: string; address: string }) => void;
@@ -38,12 +39,75 @@ interface BillingViewProps {
   onAddNewProductWithBarcode?: (barcode: string) => void;
 }
 
+const CartItemQtyInput: React.FC<{
+  item: SaleItem;
+  onChangeCartQty: (productId: string, delta: number) => void;
+  onSetCartQty?: (productId: string, qty: number) => void;
+  onRemoveFromCart: (productId: string) => void;
+}> = ({ item, onChangeCartQty, onSetCartQty, onRemoveFromCart }) => {
+  const [val, setVal] = useState<string>(String(item.qty));
+
+  useEffect(() => {
+    setVal(String(item.qty));
+  }, [item.qty]);
+
+  const commitValue = (raw: string) => {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      setVal(String(item.qty));
+      return;
+    }
+    const num = parseInt(trimmed, 10);
+    if (isNaN(num)) {
+      setVal(String(item.qty));
+      return;
+    }
+    if (num <= 0) {
+      onRemoveFromCart(item.id);
+      return;
+    }
+    if (num === item.qty) {
+      setVal(String(item.qty));
+      return;
+    }
+    if (onSetCartQty) {
+      onSetCartQty(item.id, num);
+    } else {
+      onChangeCartQty(item.id, num - item.qty);
+    }
+  };
+
+  return (
+    <input
+      type="number"
+      min="1"
+      step="1"
+      inputMode="numeric"
+      value={val}
+      onChange={(e) => setVal(e.target.value)}
+      onFocus={(e) => e.target.select()}
+      onBlur={(e) => commitValue(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.currentTarget.blur();
+        } else if (e.key === 'Escape') {
+          setVal(String(item.qty));
+          e.currentTarget.blur();
+        }
+      }}
+      title="Click to directly enter quantity (e.g. 200)"
+      className="w-14 h-6 text-center text-xs font-black text-slate-850 dark:text-slate-100 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md focus:bg-white dark:focus:bg-slate-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 outline-none transition-all px-0.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none select-all cursor-text font-mono"
+    />
+  );
+};
+
 export const BillingView: React.FC<BillingViewProps> = ({
   products,
   cart,
   onAddToCart,
   onRemoveFromCart,
   onChangeCartQty,
+  onSetCartQty,
   onClearCart,
   onOpenScanner,
   onCheckout,
@@ -441,17 +505,22 @@ export const BillingView: React.FC<BillingViewProps> = ({
                   <button
                     type="button"
                     onClick={() => onChangeCartQty(item.id, -1)}
-                    className="w-6 h-6 rounded-lg bg-rose-500/10 text-rose-650 dark:text-rose-400 font-black flex items-center justify-center hover:bg-rose-500/20 transition-colors active:scale-90"
+                    className="w-6 h-6 rounded-lg bg-rose-500/10 text-rose-650 dark:text-rose-400 font-black flex items-center justify-center hover:bg-rose-500/20 transition-colors active:scale-90 cursor-pointer"
+                    title="Decrease quantity (-1)"
                   >
                     <Minus className="w-3 h-3" />
                   </button>
-                  <span className="w-6 text-center text-xs font-black text-slate-850 dark:text-slate-100">
-                    {item.qty}
-                  </span>
+                  <CartItemQtyInput
+                    item={item}
+                    onChangeCartQty={onChangeCartQty}
+                    onSetCartQty={onSetCartQty}
+                    onRemoveFromCart={onRemoveFromCart}
+                  />
                   <button
                     type="button"
                     onClick={() => onChangeCartQty(item.id, 1)}
-                    className="w-6 h-6 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-450 font-black flex items-center justify-center hover:bg-emerald-500/20 transition-colors active:scale-90"
+                    className="w-6 h-6 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-450 font-black flex items-center justify-center hover:bg-emerald-500/20 transition-colors active:scale-90 cursor-pointer"
+                    title="Increase quantity (+1)"
                   >
                     <Plus className="w-3 h-3" />
                   </button>

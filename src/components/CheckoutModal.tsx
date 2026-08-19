@@ -4,9 +4,9 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { X, CheckCircle, Percent, QrCode, CreditCard, Landmark, DollarSign, Search, UserMinus, Award, RefreshCw } from 'lucide-react';
+import { X, CheckCircle, Percent, QrCode, CreditCard, Landmark, DollarSign, Search, UserMinus, Award, RefreshCw, Copy, Check, Maximize2, Smartphone, AlertCircle, Edit3, ShieldCheck, CheckCircle2, ChevronRight } from 'lucide-react';
 import { Customer, Staff, SaleItem, Settings, Sale } from '../types';
-import { formatCurrency, generateId } from '../utils';
+import { formatCurrency, generateId, generateUpiQrDataUrl, buildUpiPayload, copyToClipboard } from '../utils';
 import { useDialog } from '../context/DialogContext';
 
 interface CheckoutModalProps {
@@ -22,18 +22,20 @@ interface CheckoutModalProps {
     total: number;
     profit: number;
     paymentMethod: 'cash' | 'upi' | 'card' | 'credit' | 'split';
-    splitDetails?: { cashAmount: number; upiAmount: number };
+    splitDetails?: { cashAmount: number; upiAmount: number; cardAmount?: number };
     creditCustId: string | null;
     staffId: string;
     staffName: string;
     pointsRedeemed?: number;
     newCustomer?: { name: string; phone: string; email?: string; address?: string };
     interStateGst?: boolean;
+    upiTxnId?: string;
   }) => Promise<void> | void;
-  onShowUPIQR: (amt: number) => void;
+  onShowUPIQR?: (amt: number) => void;
   sales?: Sale[];
   activeStaffId?: string | null;
   showAlert?: (msg: string, title?: string) => Promise<void>;
+  onUpdateSettings?: (newSettings: Partial<Settings>) => Promise<void> | void;
 }
 
 export const CheckoutModal: React.FC<CheckoutModalProps> = ({
@@ -47,6 +49,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   sales = [],
   activeStaffId = null,
   showAlert: propShowAlert,
+  onUpdateSettings,
 }) => {
   const dialog = useDialog();
   const showAlert = propShowAlert || dialog.showAlert;
@@ -62,8 +65,18 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [splitCardAmount, setSplitCardAmount] = useState<string>('');
   const [interStateGst, setInterStateGst] = useState<boolean>(false);
 
+  // Dynamic Pay via QR states
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [isGeneratingQr, setIsGeneratingQr] = useState<boolean>(false);
+  const [isEnlargedQrOpen, setIsEnlargedQrOpen] = useState<boolean>(false);
+  const [copiedUpi, setCopiedUpi] = useState<boolean>(false);
+  const [copiedLink, setCopiedLink] = useState<boolean>(false);
+  const [customUtr, setCustomUtr] = useState<string>('');
+  const [inlineUpiInput, setInlineUpiInput] = useState<string>(settings.upi || '');
+  const [isEditingInlineUpi, setIsEditingInlineUpi] = useState<boolean>(false);
+
   const [upiSimStatus, setUpiSimStatus] = useState<'idle' | 'waiting' | 'success'>('idle');
-  const [upiSimCountdown, setUpiSimCountdown] = useState<number>(10);
+  const [upiSimCountdown, setUpiSimCountdown] = useState<number>(8);
   const [simTxnId, setSimTxnId] = useState<string>('');
 
   // Customer Credit state search
@@ -158,9 +171,96 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const numSplitCard = Number(splitCardAmount) || 0;
   const computedSplitUpi = Math.max(0, checkoutTotal - numSplitCash - numSplitCard);
 
+  // Target amount for dynamic UPI QR
+  const targetUpiAmount = paymentMethod === 'split' ? computedSplitUpi : checkoutTotal;
+  const effectiveUpiId = settings.upi || inlineUpiInput;
+
   // Change calculator
   const numCashReceived = Number(cashReceived) || 0;
   const cashChange = Math.max(0, numCashReceived - checkoutTotal);
+
+  // Synchronize inline UPI input if settings update
+  useEffect(() => {
+    if (settings.upi) {
+      setInlineUpiInput(settings.upi);
+    }
+  }, [settings.upi]);
+
+  // Effect to automatically generate dynamic UPI QR code whenever payment amount, method, or merchant details change
+  useEffect(() => {
+    const activeUpi = (settings.upi || inlineUpiInput).trim();
+    const shouldGenerate = (paymentMethod === 'upi' || (paymentMethod === 'split' && computedSplitUpi > 0)) && activeUpi && targetUpiAmount > 0;
+    
+    if (shouldGenerate) {
+      let isMounted = true;
+      setIsGeneratingQr(true);
+      
+      generateUpiQrDataUrl({
+        upiId: activeUpi,
+        payeeName: settings.shopName || 'Shop',
+        amount: targetUpiAmount,
+        currency: settings.currency || 'INR',
+        transactionNote: `Bill payment at ${settings.shopName || 'Store'}`
+      }).then(url => {
+        if (isMounted) {
+          setQrDataUrl(url);
+          setIsGeneratingQr(false);
+        }
+      }).catch(err => {
+        console.error('Error in Checkout QR generation:', err);
+        if (isMounted) setIsGeneratingQr(false);
+      });
+
+      return () => {
+        isMounted = false;
+      };
+    } else {
+      setQrDataUrl(null);
+    }
+  }, [paymentMethod, targetUpiAmount, computedSplitUpi, settings.upi, settings.shopName, settings.currency, inlineUpiInput]);
+
+  const handleCopyUpiId = async () => {
+    const activeUpi = (settings.upi || inlineUpiInput).trim();
+    if (!activeUpi) return;
+    try {
+      await copyToClipboard(activeUpi);
+      setCopiedUpi(true);
+      setTimeout(() => setCopiedUpi(false), 2000);
+    } catch (e) {
+      console.error('Clipboard copy error:', e);
+    }
+  };
+
+  const handleCopyUpiLink = async () => {
+    const activeUpi = (settings.upi || inlineUpiInput).trim();
+    if (!activeUpi) return;
+    const uri = buildUpiPayload({
+      upiId: activeUpi,
+      payeeName: settings.shopName || 'Shop',
+      amount: targetUpiAmount,
+      currency: settings.currency || 'INR',
+      transactionNote: `Bill payment at ${settings.shopName || 'Store'}`
+    });
+    try {
+      await copyToClipboard(uri);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
+    } catch (e) {
+      console.error('Clipboard copy error:', e);
+    }
+  };
+
+  const handleSaveInlineUpi = async () => {
+    const clean = inlineUpiInput.trim();
+    if (!clean || !clean.includes('@')) {
+      await showAlert('Please enter a valid UPI VPA ID containing an "@" (e.g. name@okhdfcbank or 9876543210@paytm)', 'Invalid UPI ID');
+      return;
+    }
+    if (onUpdateSettings) {
+      await onUpdateSettings({ upi: clean });
+    }
+    setIsEditingInlineUpi(false);
+  };
 
   // Reset checkmark when selected customer is cleared
   useEffect(() => {
@@ -251,6 +351,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         staffName: assignedStaff ? assignedStaff.name : '',
         pointsRedeemed: numPointsDeduction,
         interStateGst,
+        upiTxnId: customUtr.trim() || (upiSimStatus === 'success' ? simTxnId : undefined),
         newCustomer: customerType === 'new' ? {
           name: newCustName.trim(),
           phone: newCustPhone.trim(),
@@ -533,16 +634,77 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   </div>
                 </div>
 
-                {computedSplitUpi > 0 && settings.upi && (
-                  <div className="bg-indigo-50 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-900/40 p-2.5 rounded-lg flex justify-between items-center select-none text-[10px]">
-                    <span className="font-bold text-indigo-700 dark:text-indigo-400 uppercase">UPI Settlement QR: Rs.{formatCurrency(computedSplitUpi)}</span>
-                    <button
-                      type="button"
-                      onClick={() => onShowUPIQR(computedSplitUpi)}
-                      className="text-[9px] font-black uppercase text-indigo-700 dark:text-indigo-400 hover:underline flex items-center gap-1 bg-white dark:bg-slate-900 px-2 py-1 rounded shadow-xs border border-indigo-200 dark:border-indigo-850 cursor-pointer"
-                    >
-                      <QrCode className="w-3" /> Show Split QR
-                    </button>
+                {computedSplitUpi > 0 && (
+                  <div className="bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-900/50 p-3 rounded-xl space-y-2.5">
+                    <div className="flex justify-between items-center select-none">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                        <span className="text-[10px] font-black uppercase text-indigo-700 dark:text-indigo-300">
+                          ⚡ Dynamic Split UPI QR • Rs.{formatCurrency(computedSplitUpi)}
+                        </span>
+                      </div>
+                      {qrDataUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setIsEnlargedQrOpen(true)}
+                          className="text-[9px] font-black uppercase text-indigo-700 dark:text-indigo-300 hover:text-indigo-900 flex items-center gap-1 bg-white dark:bg-slate-900 px-2 py-1 rounded shadow-xs border border-indigo-200 dark:border-indigo-800 cursor-pointer"
+                        >
+                          <Maximize2 className="w-3 h-3" /> Enlarge
+                        </button>
+                      )}
+                    </div>
+
+                    {effectiveUpiId ? (
+                      <div className="flex items-center gap-3 bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-indigo-100 dark:border-indigo-900/40">
+                        {qrDataUrl ? (
+                          <div 
+                            onClick={() => setIsEnlargedQrOpen(true)}
+                            className="relative w-16 h-16 bg-white p-1 rounded-lg border border-slate-200 shadow-xs shrink-0 cursor-pointer group"
+                            title="Click to enlarge"
+                          >
+                            <img src={qrDataUrl} alt="Split UPI QR" className="w-full h-full object-contain" />
+                            <div className="absolute inset-0 bg-indigo-900/40 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center text-white">
+                              <Maximize2 className="w-4 h-4" />
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-lg flex items-center justify-center shrink-0">
+                            <RefreshCw className="w-4 h-4 text-indigo-500 animate-spin" />
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0 space-y-1">
+                          <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                            Pay to: <span className="font-bold text-slate-800 dark:text-slate-200">{settings.shopName || 'Store'}</span>
+                          </div>
+                          <div className="text-[10px] font-mono font-bold text-indigo-600 dark:text-indigo-400 truncate">
+                            {effectiveUpiId}
+                          </div>
+                          <div className="flex items-center gap-1.5 pt-0.5">
+                            <button
+                              type="button"
+                              onClick={handleCopyUpiId}
+                              className="text-[9px] font-bold text-slate-600 dark:text-slate-300 hover:text-indigo-600 flex items-center gap-1 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded cursor-pointer"
+                            >
+                              {copiedUpi ? <Check className="w-2.5 h-2.5 text-emerald-600" /> : <Copy className="w-2.5 h-2.5" />}
+                              {copiedUpi ? 'Copied' : 'Copy UPI'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleCopyUpiLink}
+                              className="text-[9px] font-bold text-slate-600 dark:text-slate-300 hover:text-indigo-600 flex items-center gap-1 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded cursor-pointer"
+                            >
+                              {copiedLink ? <Check className="w-2.5 h-2.5 text-emerald-600" /> : <QrCode className="w-2.5 h-2.5" />}
+                              {copiedLink ? 'Copied Link' : 'Copy Link'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-[10px] text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 p-2 rounded-lg border border-amber-200 dark:border-amber-800 flex items-center gap-2">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                        <span>Merchant UPI ID is not configured. Set UPI ID in Settings.</span>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -573,52 +735,288 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               </div>
             )}
 
-            {/* UPI QR trigger */}
+            {/* DYNAMIC UPI QR PAYMENT CARD */}
             {paymentMethod === 'upi' && (
-              <div className="bg-slate-50 dark:bg-slate-950 rounded-xl p-3 text-center border border-slate-100 dark:border-slate-850 space-y-2.5">
-                {upiSimStatus === 'idle' && (
-                  <div className="space-y-2.5">
-                    <p className="text-[10px] text-slate-500 font-bold uppercase leading-none">Simulated QR Code Payment Gateway</p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setUpiSimStatus('waiting');
-                        setUpiSimCountdown(6);
-                        onShowUPIQR(checkoutTotal);
-                      }}
-                      className="mx-auto flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 text-xs font-black rounded-xl active:scale-95 transition-transform cursor-pointer"
-                    >
+              <div className="bg-indigo-50/60 dark:bg-indigo-950/20 rounded-2xl p-4 border border-indigo-100 dark:border-indigo-900/40 space-y-3.5">
+                {/* Header */}
+                <div className="flex items-center justify-between select-none">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center shadow-xs">
                       <QrCode className="w-4 h-4" />
-                      Display UPI QR Code & Await Webhook
-                    </button>
-                  </div>
-                )}
-
-                {upiSimStatus === 'waiting' && (
-                  <div className="space-y-2">
-                    <div className="flex justify-center items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-indigo-500 animate-ping" />
-                      <span className="text-[10px] text-indigo-700 dark:text-indigo-400 font-black uppercase">Listening to bank webhooks... ({upiSimCountdown}s)</span>
                     </div>
-                    <p className="text-[10px] text-slate-400">Scan QR Code on the customer-facing screen to trigger automatic notification feed.</p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setUpiSimStatus('success');
-                        setSimTxnId(`TXN-${Math.floor(100000 + Math.random() * 900000)}`);
-                      }}
-                      className="mx-auto flex items-center gap-1 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-450 text-[10px] font-black uppercase rounded-lg border border-emerald-200/50"
-                    >
-                      ⚡ Instant Webhook Payment Approval
-                    </button>
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-black text-slate-850 dark:text-slate-100 uppercase tracking-wide">Pay via Dynamic UPI QR</span>
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[8px] font-black uppercase bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" /> Live
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400">Scan & pay with any UPI App</span>
+                    </div>
                   </div>
-                )}
 
-                {upiSimStatus === 'success' && (
-                  <div className="p-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 rounded-xl space-y-1 select-none">
-                    <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-widest block leading-none">✔️ Bank Webhook Confirmed!</span>
-                    <span className="text-[10px] font-bold text-slate-700 dark:text-slate-350 block">Amount Rs.{formatCurrency(checkoutTotal)} Received.</span>
-                    <span className="text-[8px] font-semibold text-slate-400 font-mono block">Ref: {simTxnId}</span>
+                  <div className="text-right">
+                    <div className="text-xs font-black text-emerald-600 dark:text-emerald-400">
+                      Rs.{formatCurrency(checkoutTotal)}
+                    </div>
+                    {qrDataUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setIsEnlargedQrOpen(true)}
+                        className="inline-flex items-center gap-1 text-[9px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                      >
+                        <Maximize2 className="w-2.5 h-2.5" /> Customer View
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* If UPI ID is missing, provide inline configuration */}
+                {!effectiveUpiId ? (
+                  <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 rounded-xl p-3.5 space-y-2.5">
+                    <div className="flex items-start gap-2 text-amber-800 dark:text-amber-300">
+                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <div>
+                        <div className="text-xs font-bold">Merchant UPI ID Not Set</div>
+                        <div className="text-[10px] text-amber-700 dark:text-amber-400 leading-relaxed">
+                          Enter your store UPI VPA ID to generate real-time dynamic QR codes for this and future bills.
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="e.g. shopname@okhdfcbank or 9876543210@paytm"
+                        value={inlineUpiInput}
+                        onChange={(e) => setInlineUpiInput(e.target.value)}
+                        className="flex-1 bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-slate-800 dark:text-white outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleSaveInlineUpi}
+                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[10px] font-black uppercase shadow-xs cursor-pointer"
+                      >
+                        Save & Generate
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* Dynamic QR Display Box */
+                  <div className="space-y-3">
+                    <div className="bg-white dark:bg-slate-900 rounded-xl p-3.5 border border-indigo-100 dark:border-indigo-900/40 flex flex-col sm:flex-row items-center gap-4">
+                      {/* QR Image Frame */}
+                      <div 
+                        onClick={() => setIsEnlargedQrOpen(true)}
+                        className="relative group cursor-pointer p-2 bg-white rounded-xl border border-slate-200 dark:border-slate-700 shadow-xs shrink-0 flex items-center justify-center"
+                        title="Click to enlarge for customer"
+                      >
+                        {isGeneratingQr ? (
+                          <div className="w-36 h-36 flex flex-col items-center justify-center gap-2">
+                            <RefreshCw className="w-6 h-6 text-indigo-600 animate-spin" />
+                            <span className="text-[9px] font-bold text-slate-400">Generating QR...</span>
+                          </div>
+                        ) : qrDataUrl ? (
+                          <div className="relative">
+                            <img src={qrDataUrl} alt="Dynamic UPI QR" className="w-36 h-36 object-contain rounded-md" />
+                            <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity rounded-md flex items-center justify-center text-white text-[10px] font-black uppercase gap-1">
+                              <Maximize2 className="w-4 h-4" /> Enlarge
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="w-36 h-36 flex items-center justify-center text-[10px] text-slate-400">
+                            Unable to render QR
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Payee Info & Actions */}
+                      <div className="flex-1 min-w-0 space-y-2 text-left w-full">
+                        <div>
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Merchant Payee</span>
+                          <span className="text-xs font-extrabold text-slate-800 dark:text-slate-100 block truncate">
+                            {settings.shopName || 'Store Merchant'}
+                          </span>
+                        </div>
+
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">UPI VPA ID</span>
+                            <button
+                              type="button"
+                              onClick={() => setIsEditingInlineUpi(!isEditingInlineUpi)}
+                              className="text-[9px] text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-0.5 cursor-pointer font-semibold"
+                            >
+                              <Edit3 className="w-2.5 h-2.5" /> {isEditingInlineUpi ? 'Done' : 'Edit'}
+                            </button>
+                          </div>
+
+                          {isEditingInlineUpi ? (
+                            <div className="flex gap-1 mt-1">
+                              <input
+                                type="text"
+                                value={inlineUpiInput}
+                                onChange={(e) => setInlineUpiInput(e.target.value)}
+                                className="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded px-1.5 py-1 text-[11px] font-mono text-slate-800 dark:text-white"
+                              />
+                              <button
+                                type="button"
+                                onClick={handleSaveInlineUpi}
+                                className="px-2 bg-indigo-600 text-white rounded text-[9px] font-bold"
+                              >
+                                Save
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <code className="bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded font-mono text-[11px] font-bold truncate max-w-[170px]">
+                                {effectiveUpiId}
+                              </code>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Quick Copy Action Buttons */}
+                        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                          <button
+                            type="button"
+                            onClick={handleCopyUpiId}
+                            className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase flex items-center gap-1 transition-all cursor-pointer border ${
+                              copiedUpi
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                                : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700'
+                            }`}
+                          >
+                            {copiedUpi ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                            {copiedUpi ? 'Copied VPA' : 'Copy UPI ID'}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={handleCopyUpiLink}
+                            className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase flex items-center gap-1 transition-all cursor-pointer border ${
+                              copiedLink
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                                : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700'
+                            }`}
+                          >
+                            {copiedLink ? <Check className="w-3 h-3 text-emerald-600" /> : <QrCode className="w-3 h-3" />}
+                            {copiedLink ? 'Copied Link' : 'Copy Pay Link'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Supported UPI Apps Badges */}
+                    <div className="flex flex-wrap items-center justify-center gap-1 select-none">
+                      <span className="text-[8px] font-bold text-slate-400 uppercase mr-1">Supported Apps:</span>
+                      {['Google Pay', 'PhonePe', 'Paytm', 'BHIM UPI', 'Amazon Pay', 'Cred', 'WhatsApp'].map(app => (
+                        <span 
+                          key={app} 
+                          className="px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[8px] font-bold text-slate-600 dark:text-slate-400"
+                        >
+                          {app}
+                        </span>
+                      ))}
+                    </div>
+
+                    {/* Optional UTR / Reference ID Entry */}
+                    <div className="bg-white dark:bg-slate-900 rounded-xl p-2.5 border border-slate-200 dark:border-slate-800 space-y-1.5">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                          Bank UTR / Transaction Ref # (Optional)
+                        </label>
+                        {customUtr && (
+                          <span className="text-[8px] font-bold text-emerald-600 dark:text-emerald-400">Attached</span>
+                        )}
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="e.g. 423891024567 or TXN Ref"
+                        value={customUtr}
+                        onChange={(e) => setCustomUtr(e.target.value)}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-250 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-mono text-slate-800 dark:text-white outline-none focus:border-indigo-500"
+                      />
+                    </div>
+
+                    {/* Live Verification & Gateway Simulator */}
+                    <div className="pt-1">
+                      {upiSimStatus === 'idle' && (
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setUpiSimStatus('waiting');
+                              setUpiSimCountdown(6);
+                            }}
+                            className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-[10px] font-black uppercase rounded-xl border border-indigo-200 dark:border-indigo-800 transition-all cursor-pointer"
+                          >
+                            <RefreshCw className="w-3 h-3" />
+                            Simulate Bank Webhook Listen
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setUpiSimStatus('success');
+                              setSimTxnId(`UPI-${Math.floor(100000000000 + Math.random() * 900000000000)}`);
+                            }}
+                            className="flex items-center justify-center gap-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black uppercase rounded-xl shadow-xs transition-all cursor-pointer"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            Mark Paid
+                          </button>
+                        </div>
+                      )}
+
+                      {upiSimStatus === 'waiting' && (
+                        <div className="bg-indigo-50 dark:bg-indigo-950/50 p-2.5 rounded-xl border border-indigo-200 dark:border-indigo-800 space-y-2 text-center">
+                          <div className="flex justify-center items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-indigo-600 animate-ping" />
+                            <span className="text-[10px] text-indigo-700 dark:text-indigo-300 font-black uppercase">
+                              Listening for Bank Webhook Confirmation... ({upiSimCountdown}s)
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setUpiSimStatus('success');
+                              setSimTxnId(`UPI-${Math.floor(100000000000 + Math.random() * 900000000000)}`);
+                            }}
+                            className="mx-auto flex items-center gap-1 px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-black uppercase rounded-lg shadow-xs cursor-pointer"
+                          >
+                            ⚡ Instant Approve Payment
+                          </button>
+                        </div>
+                      )}
+
+                      {upiSimStatus === 'success' && (
+                        <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl flex items-center justify-between select-none">
+                          <div className="flex items-center gap-2">
+                            <div className="w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center shrink-0">
+                              <Check className="w-3.5 h-3.5 stroke-[3]" />
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-300 uppercase block leading-none">
+                                Payment Received & Verified!
+                              </span>
+                              <span className="text-[9px] font-mono text-emerald-800 dark:text-emerald-400 font-semibold block mt-0.5">
+                                Ref: {customUtr || simTxnId}
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setUpiSimStatus('idle');
+                              setSimTxnId('');
+                            }}
+                            className="text-[9px] text-slate-400 hover:text-slate-600 underline font-bold"
+                          >
+                            Reset
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -817,6 +1215,69 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           </div>
         </div>
       </div>
+
+      {/* CUSTOMER-FACING FULLSCREEN/ENLARGED DYNAMIC UPI QR POPUP */}
+      {isEnlargedQrOpen && qrDataUrl && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl w-full max-w-sm p-6 text-center space-y-4 shadow-2xl border border-slate-200 dark:border-slate-800 relative">
+            <button
+              type="button"
+              onClick={() => setIsEnlargedQrOpen(false)}
+              className="absolute right-4 top-4 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 bg-slate-100 dark:bg-slate-800 rounded-full p-1.5 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-[10px] font-black uppercase text-emerald-700 dark:text-emerald-300">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                Dynamic UPI Payment
+              </div>
+              <h3 className="text-base font-extrabold text-slate-900 dark:text-white mt-1">
+                {settings.shopName || 'Store Payment'}
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Scan to pay with any UPI Application</p>
+            </div>
+
+            {/* High-res Enlarged QR Frame */}
+            <div className="p-3 bg-white rounded-2xl border-2 border-indigo-100 dark:border-indigo-900/50 shadow-inner inline-block mx-auto">
+              <img 
+                src={qrDataUrl} 
+                alt="Enlarged Dynamic UPI QR" 
+                className="w-56 h-56 object-contain rounded-lg"
+              />
+            </div>
+
+            {/* Amount Banner */}
+            <div className="bg-slate-50 dark:bg-slate-850 p-3 rounded-2xl border border-slate-200 dark:border-slate-800">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Payable Amount</span>
+              <span className="text-2xl font-black text-emerald-600 dark:text-emerald-400 block mt-0.5">
+                Rs.{formatCurrency(targetUpiAmount)}
+              </span>
+              <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400 block mt-1">
+                UPI ID: {effectiveUpiId}
+              </span>
+            </div>
+
+            {/* Supported Badges */}
+            <div className="flex flex-wrap items-center justify-center gap-1.5 select-none pt-1">
+              {['GPay', 'PhonePe', 'Paytm', 'BHIM', 'Amazon Pay', 'Cred'].map(app => (
+                <span key={app} className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[9px] font-bold text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                  {app}
+                </span>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setIsEnlargedQrOpen(false)}
+              className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-white text-white dark:text-slate-900 text-xs font-black uppercase rounded-xl transition-all cursor-pointer"
+            >
+              Done / Close Display
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 

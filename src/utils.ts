@@ -5,8 +5,9 @@
 
 import { jsPDF } from 'jspdf';
 import { Clipboard } from '@capacitor/clipboard';
+import QRCode from 'qrcode';
 import { languagePacks } from './context/LocalizationContext';
-import { savePdfToAppFolder, isNativeCapacitor } from './services/nativeStorage';
+import { savePdfToAppFolder, isNativeCapacitor, downloadOrSaveDataFile } from './services/nativeStorage';
 
 // Format numbers with 2 decimal places unless they are integers
 export function formatCurrency(n: number): string {
@@ -67,6 +68,194 @@ export function getTodayDateString(): string {
   const month = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+// Convert any Date object to local YYYY-MM-DD string
+export function getDateString(date: Date = new Date()): string {
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return getTodayDateString();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+// Normalize any date representation (ISO string, YYYY-MM-DD, DD/MM/YYYY) to standard YYYY-MM-DD
+export function parseDateString(dateStr: string | null | undefined): string {
+  if (!dateStr) return '';
+  const clean = String(dateStr).trim();
+  if (clean.includes('T')) return clean.split('T')[0];
+  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) return clean;
+  if (/^\d{2}[/-]\d{2}[/-]\d{4}$/.test(clean)) {
+    const parts = clean.split(/[/-]/);
+    return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+  }
+  const d = new Date(clean);
+  if (!isNaN(d.getTime())) {
+    return getDateString(d);
+  }
+  return clean;
+}
+
+// Compare if two date strings or Date objects correspond to the exact same calendar day
+export function isSameDate(d1: string | Date | null | undefined, d2: string | Date | null | undefined): boolean {
+  if (!d1 || !d2) return false;
+  const s1 = typeof d1 === 'string' ? parseDateString(d1) : getDateString(d1);
+  const s2 = typeof d2 === 'string' ? parseDateString(d2) : getDateString(d2);
+  return s1 === s2 && s1.length > 0;
+}
+
+// Extract exact numerical timestamp from a sale object for accurate chronological comparison
+export function getSaleTimestamp(sale: {
+  date?: string | null;
+  time?: string | null;
+  createdAt?: string | number | null;
+  id?: string | number | null;
+  billNo?: string | number | null;
+}): number {
+  if (!sale) return 0;
+
+  // 1. Check createdAt if present
+  if (sale.createdAt) {
+    if (typeof sale.createdAt === 'number' && !isNaN(sale.createdAt) && sale.createdAt > 0) {
+      return sale.createdAt;
+    }
+    const t = new Date(sale.createdAt).getTime();
+    if (!isNaN(t) && t > 0) return t;
+  }
+
+  // 2. Parse date and time fields
+  const cleanDate = parseDateString(sale.date);
+  if (cleanDate) {
+    const parts = cleanDate.split('-').map(Number);
+    const y = parts[0];
+    const m = parts[1];
+    const d = parts[2];
+
+    if (y && m && d) {
+      let hours = 0;
+      let minutes = 0;
+      let seconds = 0;
+
+      if (sale.time) {
+        const timeStr = String(sale.time).trim();
+        const isPM = /pm/i.test(timeStr);
+        const isAM = /am/i.test(timeStr);
+        const numericParts = timeStr.replace(/[^\d:]/g, '').split(':').map(Number);
+
+        if (numericParts.length >= 2) {
+          let h = numericParts[0] || 0;
+          if (isPM && h < 12) h += 12;
+          if (isAM && h === 12) h = 0;
+          hours = Math.min(23, Math.max(0, h));
+          minutes = Math.min(59, Math.max(0, numericParts[1] || 0));
+          seconds = Math.min(59, Math.max(0, numericParts[2] || 0));
+        }
+      }
+
+      const saleDate = new Date(y, m - 1, d, hours, minutes, seconds);
+      const t = saleDate.getTime();
+      if (!isNaN(t) && t > 0) return t;
+    }
+  }
+
+  // 3. Fallback to numeric timestamp-like ID if available
+  const numericId = parseInt(String(sale.id || ''), 10);
+  if (!isNaN(numericId) && numericId > 1000000000) {
+    return numericId;
+  }
+
+  return 0;
+}
+
+// Compare two sales for sorting across any view
+export function compareSales(
+  a: {
+    date?: string | null;
+    time?: string | null;
+    createdAt?: string | number | null;
+    id?: string | number | null;
+    billNo?: string | number | null;
+    total?: number | null;
+    customer?: string | null;
+  },
+  b: {
+    date?: string | null;
+    time?: string | null;
+    createdAt?: string | number | null;
+    id?: string | number | null;
+    billNo?: string | number | null;
+    total?: number | null;
+    customer?: string | null;
+  },
+  sortBy: 'date' | 'amount' | 'customer' = 'date',
+  order: 'asc' | 'desc' = 'desc'
+): number {
+  let comparison = 0;
+
+  if (sortBy === 'date') {
+    const timeA = getSaleTimestamp(a);
+    const timeB = getSaleTimestamp(b);
+
+    if (timeA > 0 && timeB > 0 && timeA !== timeB) {
+      comparison = timeA - timeB;
+    } else {
+      const dateA = parseDateString(a.date);
+      const dateB = parseDateString(b.date);
+      if (dateA !== dateB) {
+        comparison = dateA.localeCompare(dateB);
+      } else {
+        // Same date: compare bill numbers numerically
+        const numA = parseInt(String(a.billNo || '').replace(/\D/g, ''), 10);
+        const numB = parseInt(String(b.billNo || '').replace(/\D/g, ''), 10);
+        if (!isNaN(numA) && !isNaN(numB) && numA !== numB) {
+          comparison = numA - numB;
+        } else {
+          comparison = String(a.id || '').localeCompare(String(b.id || ''), undefined, { numeric: true });
+        }
+      }
+    }
+  } else if (sortBy === 'amount') {
+    const amtA = Number(a.total) || 0;
+    const amtB = Number(b.total) || 0;
+    if (amtA !== amtB) {
+      comparison = amtA - amtB;
+    } else {
+      const timeA = getSaleTimestamp(a);
+      const timeB = getSaleTimestamp(b);
+      comparison = timeA - timeB;
+    }
+  } else if (sortBy === 'customer') {
+    const nameA = String(a.customer || 'Walk-in').trim();
+    const nameB = String(b.customer || 'Walk-in').trim();
+    comparison = nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
+    if (comparison === 0) {
+      const timeA = getSaleTimestamp(a);
+      const timeB = getSaleTimestamp(b);
+      comparison = timeA - timeB;
+    }
+  }
+
+  return order === 'asc' ? comparison : -comparison;
+}
+
+// Robust profit calculation for a single sale
+export function computeSaleProfit(sale: {
+  profit?: number | null;
+  items?: { price: number; buyPrice?: number; qty: number }[];
+  discount?: number;
+}): number {
+  if (typeof sale.profit === 'number' && !isNaN(sale.profit)) {
+    return sale.profit;
+  }
+  const itemsProfit = (sale.items || []).reduce((sum, item) => {
+    const buyPrice = typeof item.buyPrice === 'number' && !isNaN(item.buyPrice) ? item.buyPrice : 0;
+    const sellPrice = typeof item.price === 'number' && !isNaN(item.price) ? item.price : 0;
+    const qty = typeof item.qty === 'number' && !isNaN(item.qty) ? item.qty : 1;
+    return sum + ((sellPrice - buyPrice) * qty);
+  }, 0);
+  const discount = typeof sale.discount === 'number' && !isNaN(sale.discount) ? sale.discount : 0;
+  return itemsProfit - discount;
 }
 
 // Escape dangerous HTML entities (just in case they are used in raw renders, though React handles escaping natively)
@@ -172,7 +361,14 @@ export function computePredictiveAlerts(products: any[], sales: any[]): Predicti
   
   // Aggregate sales in the last 30 days
   const thirtyDaysAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const activeRecentSales = sales.filter(s => !s.voided && new Date(s.date + 'T00:00:00') >= thirtyDaysAgo);
+  thirtyDaysAgo.setHours(0, 0, 0, 0);
+  const activeRecentSales = sales.filter(s => {
+    if (s.voided) return false;
+    const cleanDate = parseDateString(s.date);
+    const [y, m, d] = cleanDate.split('-').map(Number);
+    if (!y || !m || !d) return false;
+    return new Date(y, m - 1, d) >= thirtyDaysAgo;
+  });
   
   const soldUnits: { [key: string]: number } = {};
   activeRecentSales.forEach(s => {
@@ -692,5 +888,306 @@ export async function generateEWayBillPDF(
 
   return { success: true, doc, filename, base64 };
 }
+
+/**
+ * Generate official Purchase Order PDF.
+ */
+export function generatePurchaseOrderPDF(
+  po: {
+    poNo: string;
+    date: string;
+    supplierName: string;
+    items: { name: string; price: number; qty: number }[];
+    total: number;
+    status: string;
+  },
+  shopInfo: {
+    shopName?: string;
+    address?: string;
+    phone?: string;
+    gstin?: string;
+    currency?: string;
+  }
+): { success: boolean; doc: jsPDF; filename: string; base64: string } {
+  const doc = new jsPDF({
+    compress: true,
+  });
+
+  // Top header banner
+  doc.setFillColor(15, 23, 42); // slate-900
+  doc.rect(0, 0, 210, 35, 'F');
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(20);
+  doc.text(shopInfo.shopName || 'ShopPOS Store', 15, 18);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+
+  const headerText = shopInfo.phone ? `${shopInfo.address || ''} | Phone: ${shopInfo.phone}` : (shopInfo.address || '');
+  doc.text(headerText, 15, 25.5);
+
+  // Document Title
+  doc.setTextColor(30, 41, 59);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.text('OFFICIAL PURCHASE ORDER', 15, 50);
+
+  // Document Metadata
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`PO Number: ${po.poNo}`, 15, 56);
+  doc.text(`Issue Date: ${formatDate(po.date)}`, 15, 61);
+  doc.text(`Status: ${po.status.toUpperCase()}`, 15, 66);
+
+  // Supplier details block
+  doc.setFillColor(248, 250, 252);
+  doc.rect(120, 43, 75, 26, 'F');
+  doc.setDrawColor(226, 232, 240);
+  doc.rect(120, 43, 75, 26, 'D');
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('PURCHASE FROM SUPPLIER:', 124, 48);
+  doc.setFont('helvetica', 'normal');
+  doc.text(po.supplierName || 'Wholesale Supplier', 124, 54);
+  doc.text('Authorized Commercial Vendor', 124, 59);
+
+  // Table Header
+  let y = 80;
+  doc.setFillColor(15, 23, 42);
+  doc.rect(15, y, 180, 8, 'F');
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.text('ITEM DESCRIPTION', 18, y + 5.5);
+  doc.text('ORDER QTY', 110, y + 5.5, { align: 'center' });
+  doc.text('UNIT PRICE', 145, y + 5.5, { align: 'right' });
+  doc.text('TOTAL AMOUNT', 190, y + 5.5, { align: 'right' });
+
+  // Items
+  doc.setTextColor(51, 65, 85);
+  doc.setFont('helvetica', 'normal');
+
+  const cur = shopInfo.currency || 'Rs.';
+  po.items.forEach((item) => {
+    y += 8;
+    if (y > 270) {
+      doc.addPage();
+      y = 15;
+    }
+    doc.setDrawColor(241, 245, 249);
+    doc.line(15, y, 195, y);
+
+    const lineTotal = item.price * item.qty;
+    doc.text(item.name, 18, y + 5.5);
+    doc.text(`${item.qty}`, 110, y + 5.5, { align: 'center' });
+    doc.text(`${cur}${formatCurrency(item.price)}`, 145, y + 5.5, { align: 'right' });
+    doc.text(`${cur}${formatCurrency(lineTotal)}`, 190, y + 5.5, { align: 'right' });
+  });
+
+  // Total Summary
+  y += 12;
+  doc.setDrawColor(15, 23, 42);
+  doc.line(15, y, 195, y);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('TOTAL PO VALUATION:', 130, y + 6);
+  doc.text(`${cur}${formatCurrency(po.total)}`, 190, y + 6, { align: 'right' });
+
+  // Terms & Signature
+  y += 20;
+  if (y > 230) {
+    doc.addPage();
+    y = 20;
+  }
+
+  doc.setFontSize(9);
+  doc.setTextColor(100, 116, 139);
+  doc.text('Purchase Order Terms & Payment Schedule:', 15, y);
+  doc.setFont('helvetica', 'normal');
+  doc.text('1. Please supply items in specified packaging and verify batch expiry dates.', 15, y + 5);
+  doc.text('2. Payments will be disbursed as per agreed wholesale credit invoice terms.', 15, y + 10);
+
+  doc.line(135, y + 25, 190, y + 25);
+  doc.text('Authorized Purchasing Manager', 138, y + 30);
+
+  const filename = `PO_${po.poNo}.pdf`;
+  const base64 = doc.output('datauristring');
+
+  if (isNativeCapacitor()) {
+    savePdfToAppFolder(base64, filename, 'Invoices');
+  } else {
+    doc.save(filename);
+  }
+
+  return { success: true, doc, filename, base64 };
+}
+
+/**
+ * Generate official Credit / Debit Note PDF.
+ */
+export function generateCreditDebitNotePDF(
+  note: {
+    noteNo: string;
+    date: string;
+    type: 'Credit Note' | 'Debit Note';
+    partyName: string;
+    amount: number;
+    reason: string;
+  },
+  shopInfo: {
+    shopName?: string;
+    address?: string;
+    phone?: string;
+    gstin?: string;
+    currency?: string;
+  }
+): { success: boolean; doc: jsPDF; filename: string; base64: string } {
+  const doc = new jsPDF({
+    compress: true,
+  });
+
+  // Top header banner
+  doc.setFillColor(note.type === 'Credit Note' ? 159 : 30, note.type === 'Credit Note' ? 18 : 41, note.type === 'Credit Note' ? 57 : 59);
+  doc.rect(0, 0, 210, 35, 'F');
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(20);
+  doc.text(shopInfo.shopName || 'ShopPOS Store', 15, 18);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+
+  const headerText = shopInfo.phone ? `${shopInfo.address || ''} | Phone: ${shopInfo.phone}` : (shopInfo.address || '');
+  doc.text(headerText, 15, 25.5);
+
+  // Document Title
+  doc.setTextColor(30, 41, 59);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.text(`OFFICIAL ${note.type.toUpperCase()}`, 15, 50);
+
+  // Document Metadata
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Note Reference No: ${note.noteNo}`, 15, 56);
+  doc.text(`Date of Issue: ${formatDate(note.date)}`, 15, 61);
+  doc.text(`Document Nature: ${note.type === 'Credit Note' ? 'Customer Refund / Sales Return' : 'Supplier Return / Debit Adjustment'}`, 15, 66);
+
+  // Party details
+  doc.setFillColor(248, 250, 252);
+  doc.rect(120, 43, 75, 26, 'F');
+  doc.setDrawColor(226, 232, 240);
+  doc.rect(120, 43, 75, 26, 'D');
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('ISSUED TO / PARTY:', 124, 48);
+  doc.setFont('helvetica', 'normal');
+  doc.text(note.partyName || 'Customer / Vendor', 124, 54);
+  doc.text('Account Ledger Adjustment', 124, 59);
+
+  // Box for Amount and Reason
+  let y = 80;
+  doc.setFillColor(241, 245, 249);
+  doc.rect(15, y, 180, 40, 'F');
+  doc.setDrawColor(203, 213, 225);
+  doc.rect(15, y, 180, 40, 'D');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(15, 23, 42);
+  doc.text('ADJUSTMENT PARTICULARS & REASON:', 20, y + 10);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.setTextColor(51, 65, 85);
+  doc.text(`Reason: ${note.reason}`, 20, y + 18);
+
+  const cur = shopInfo.currency || 'Rs.';
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.setTextColor(note.type === 'Credit Note' ? 225 : 79, note.type === 'Credit Note' ? 29 : 70, note.type === 'Credit Note' ? 72 : 229);
+  doc.text(`ADJUSTED AMOUNT: ${cur}${formatCurrency(note.amount)}`, 20, y + 32);
+
+  // Signature
+  y = 145;
+  doc.setFontSize(9);
+  doc.setTextColor(100, 116, 139);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Declaration:', 15, y);
+  doc.text('This voucher confirms the credit/debit adjustment entered in financial accounting ledgers.', 15, y + 5);
+
+  doc.line(135, y + 30, 190, y + 30);
+  doc.text('Authorized Accountant Signature', 138, y + 35);
+
+  const filename = `${note.type.replace(/\s+/g, '_')}_${note.noteNo}.pdf`;
+  const base64 = doc.output('datauristring');
+
+  if (isNativeCapacitor()) {
+    savePdfToAppFolder(base64, filename, 'Invoices');
+  } else {
+    doc.save(filename);
+  }
+
+  return { success: true, doc, filename, base64 };
+}
+
+export { downloadOrSaveDataFile, savePdfToAppFolder };
+
+/**
+ * Constructs a standard NPCI UPI payment URI
+ */
+export function buildUpiPayload(params: {
+  upiId: string;
+  payeeName?: string;
+  amount?: number;
+  currency?: string;
+  transactionNote?: string;
+  transactionRef?: string;
+}): string {
+  const { upiId, payeeName = 'Merchant', amount, currency = 'INR', transactionNote, transactionRef } = params;
+  const cleanUpi = upiId.trim();
+  let uri = `upi://pay?pa=${encodeURIComponent(cleanUpi)}&pn=${encodeURIComponent(payeeName || 'Store')}&cu=${encodeURIComponent(currency || 'INR')}`;
+  if (amount !== undefined && amount > 0) {
+    uri += `&am=${amount.toFixed(2)}`;
+  }
+  if (transactionNote) {
+    uri += `&tn=${encodeURIComponent(transactionNote)}`;
+  }
+  if (transactionRef) {
+    uri += `&tr=${encodeURIComponent(transactionRef)}`;
+  }
+  return uri;
+}
+
+/**
+ * Generates an offline, high-contrast QR Code Data URL from standard UPI params
+ */
+export async function generateUpiQrDataUrl(params: {
+  upiId: string;
+  payeeName?: string;
+  amount?: number;
+  currency?: string;
+  transactionNote?: string;
+  transactionRef?: string;
+  width?: number;
+}): Promise<string> {
+  const payload = buildUpiPayload(params);
+  try {
+    return await QRCode.toDataURL(payload, {
+      width: params.width || 320,
+      margin: 1,
+      color: {
+        dark: '#0f172a',
+        light: '#ffffff'
+      },
+      errorCorrectionLevel: 'M'
+    });
+  } catch (err) {
+    console.error('Error generating UPI QR locally:', err);
+    return `https://api.qrserver.com/v1/create-qr-code/?size=${params.width || 300}x${params.width || 300}&data=${encodeURIComponent(payload)}`;
+  }
+}
+
 
 

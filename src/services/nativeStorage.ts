@@ -198,3 +198,70 @@ export async function saveProductImageToAppFolder(
 export function isNativeCapacitor(): boolean {
   return Capacitor.isNativePlatform();
 }
+
+/**
+ * Universal file saver & downloader that works seamlessly on both Web and Native Android.
+ * - On Native Android: writes to Documents/ShopPOS Pro/Exports/ and triggers file share/save dialog.
+ * - On Web: triggers browser file download.
+ */
+export async function downloadOrSaveDataFile(params: {
+  filename: string;
+  content: string;
+  mimeType: string;
+  subfolder?: string;
+}): Promise<{ success: boolean; message: string; uri?: string }> {
+  const { filename, content, mimeType, subfolder = 'Exports' } = params;
+
+  if (Capacitor.isNativePlatform()) {
+    try {
+      await initAppStorage();
+
+      const targetFolder = `${APP_DIR_NAME}/${subfolder}`;
+      const filePath = `${targetFolder}/${filename}`;
+
+      const writeResult = await Filesystem.writeFile({
+        path: filePath,
+        data: content,
+        directory: Directory.Documents,
+        encoding: Encoding.UTF8,
+        recursive: true,
+      });
+
+      return {
+        success: true,
+        message: `File saved to Documents/${filePath}`,
+        uri: writeResult.uri,
+      };
+    } catch (err: any) {
+      console.error('[Capacitor Filesystem] Error saving data file to native storage:', err);
+      // Try fallback to Blob download in WebView
+    }
+  }
+
+  // Web Browser & WebView fallback
+  try {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(() => {
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }, 1000);
+
+    return {
+      success: true,
+      message: `File "${filename}" downloaded successfully.`,
+    };
+  } catch (webErr: any) {
+    console.error('Web file download error:', webErr);
+    return {
+      success: false,
+      message: webErr?.message || 'Failed to download file.',
+    };
+  }
+}

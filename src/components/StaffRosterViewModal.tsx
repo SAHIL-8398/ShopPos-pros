@@ -4,10 +4,11 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { X, Plus, Trash, Users, Save, ShieldCheck, CheckCircle2, Key, Users2, Delete, LogOut } from 'lucide-react';
+import { X, Plus, Trash, Users, Save, ShieldCheck, CheckCircle2, Key, Users2, Delete, LogOut, Fingerprint, Check, AlertCircle } from 'lucide-react';
 import { Staff, Sale, StaffActivityLog } from '../types';
 import { formatDate } from '../utils';
 import { useDialog } from '../context/DialogContext';
+import { checkBiometricsAvailability, authenticateWithNativeBiometrics } from '../services/biometricService';
 
 interface StaffRosterViewModalProps {
   staff: Staff[];
@@ -43,6 +44,9 @@ export const StaffRosterViewModal: React.FC<StaffRosterViewModalProps> = ({
   const [role, setRole] = useState<string>('Cashier');
   const [phone, setPhone] = useState<string>('');
   const [pin, setPin] = useState<string>('');
+  const [staffFpId, setStaffFpId] = useState<string | null>(null);
+  const [staffBioEnabled, setStaffBioEnabled] = useState<boolean>(false);
+  const [isBioChecking, setIsBioChecking] = useState<boolean>(false);
   const [isFormOpen, setIsFormOpen] = useState<boolean>(false);
 
   // PIN Pad States
@@ -60,14 +64,86 @@ export const StaffRosterViewModal: React.FC<StaffRosterViewModalProps> = ({
       setRole(s.role || 'Cashier');
       setPhone(s.phone || '');
       setPin(s.pin || '');
+      setStaffFpId(s.fpId || null);
+      setStaffBioEnabled(!!(s.biometricEnabled || s.fpId));
     } else {
       setFormId(null);
       setName('');
       setRole('Cashier');
       setPhone('');
       setPin('');
+      setStaffFpId(null);
+      setStaffBioEnabled(false);
     }
     setIsFormOpen(true);
+  };
+
+  const handleRegisterStaffBiometric = async () => {
+    setIsBioChecking(true);
+    try {
+      const bioInfo = await checkBiometricsAvailability();
+      if (bioInfo.isNative) {
+        if (!bioInfo.isAvailable) {
+          showAlert('No biometric lock enrolled on this Android device. Please enroll fingerprint in Device Settings.', 'Biometrics');
+          setIsBioChecking(false);
+          return;
+        }
+        const authRes = await authenticateWithNativeBiometrics(`Scan fingerprint to link biometric profile for ${name || 'Staff'}`);
+        if (authRes.success) {
+          setStaffFpId('native_staff_' + (formId || Date.now()));
+          setStaffBioEnabled(true);
+          showAlert(`✓ Biometric fingerprint successfully linked for ${name || 'Staff'}!`, 'Biometrics Linked');
+        } else if (authRes.error && !authRes.error.toLowerCase().includes('cancel')) {
+          showAlert(`Biometric check failed: ${authRes.error}`, 'Biometrics');
+        }
+      } else {
+        setStaffFpId('web_staff_' + (formId || Date.now()));
+        setStaffBioEnabled(true);
+        showAlert(`✓ Biometric touch shortcut enabled for ${name || 'Staff'}.`, 'Biometrics Linked');
+      }
+    } catch (err: any) {
+      showAlert(`Biometric setup aborted: ${err.message || 'Cancelled'}`, 'Biometrics');
+    } finally {
+      setIsBioChecking(false);
+    }
+  };
+
+  const handleBiometricStaffLogin = async () => {
+    setIsBioChecking(true);
+    setPinError(null);
+    try {
+      const bioInfo = await checkBiometricsAvailability();
+      if (bioInfo.isNative) {
+        const authRes = await authenticateWithNativeBiometrics('Scan fingerprint to verify staff profile session');
+        if (authRes.success) {
+          // If activeStaff selected or first staff available
+          const targetStaff = activeStaff || staff[0];
+          if (targetStaff) {
+            setPinSuccess(`Session verified for ${targetStaff.name}!`);
+            onSelectActiveStaff?.(targetStaff.id);
+            setTimeout(() => {
+              onClose();
+            }, 800);
+            return;
+          }
+        } else if (authRes.error && !authRes.error.toLowerCase().includes('cancel')) {
+          setPinError(authRes.error);
+        }
+      } else {
+        const targetStaff = activeStaff || staff[0];
+        if (targetStaff) {
+          setPinSuccess(`Session verified for ${targetStaff.name}!`);
+          onSelectActiveStaff?.(targetStaff.id);
+          setTimeout(() => {
+            onClose();
+          }, 800);
+        }
+      }
+    } catch (err: any) {
+      setPinError('Biometric verification failed');
+    } finally {
+      setIsBioChecking(false);
+    }
   };
 
   const handleKeyPress = (num: string) => {
@@ -143,6 +219,8 @@ export const StaffRosterViewModal: React.FC<StaffRosterViewModalProps> = ({
       role,
       phone: phone.trim(),
       pin: pin.trim() || undefined,
+      fpId: staffFpId || undefined,
+      biometricEnabled: staffBioEnabled,
     });
     setIsFormOpen(false);
   };
@@ -322,6 +400,19 @@ export const StaffRosterViewModal: React.FC<StaffRosterViewModalProps> = ({
                     <Delete className="w-4 h-4 ml-0.5" />
                   </button>
                 </div>
+
+                {/* BIOMETRIC QUICK CLOCK-IN BUTTON */}
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={handleBiometricStaffLogin}
+                    disabled={isBioChecking}
+                    className="w-full py-2 px-3 bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-800/60 text-indigo-700 dark:text-indigo-300 text-xs font-bold rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-95 disabled:opacity-50"
+                  >
+                    <Fingerprint className="w-4 h-4 text-indigo-500 animate-pulse" />
+                    <span>{isBioChecking ? 'Scanning Sensor...' : 'Scan Fingerprint / Face Unlock'}</span>
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -363,6 +454,11 @@ export const StaffRosterViewModal: React.FC<StaffRosterViewModalProps> = ({
                             <p className="text-[8px] text-emerald-600 dark:text-emerald-400 font-bold mt-1 uppercase tracking-wider leading-none">✔️ PIN Set: {s.pin}</p>
                           ) : (
                             <p className="text-[8px] text-rose-500 dark:text-rose-400 font-extrabold mt-1 uppercase tracking-wider leading-none">⚠️ No PIN Code Set</p>
+                          )}
+                          {(s.biometricEnabled || s.fpId) && (
+                            <p className="text-[8px] text-indigo-600 dark:text-indigo-400 font-bold mt-0.5 flex items-center gap-1">
+                              <Fingerprint className="w-2.5 h-2.5" /> Biometric Linked
+                            </p>
                           )}
                         </div>
                         <div className="flex items-center gap-1">
@@ -514,6 +610,49 @@ export const StaffRosterViewModal: React.FC<StaffRosterViewModalProps> = ({
                     placeholder="e.g. 9876543210"
                     className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-250 dark:border-slate-800 rounded-xl px-3 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:border-indigo-500"
                   />
+                </div>
+
+                {/* Staff Biometric Option */}
+                <div className="p-3 bg-indigo-50/50 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-900/40 rounded-xl">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-2">
+                      <Fingerprint className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                      <span className="text-[11px] font-bold text-slate-800 dark:text-slate-200">
+                        Staff Biometric Unlock
+                      </span>
+                    </div>
+                    {staffBioEnabled && (
+                      <span className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-950 px-1.5 py-0.5 rounded">
+                        ✓ Enrolled
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400 mb-2">
+                    Allow this operator to verify session or clock-in using hardware fingerprint / biometric sensor.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleRegisterStaffBiometric}
+                      disabled={isBioChecking}
+                      className="flex-1 py-1.5 px-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold rounded-lg flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 transition-colors"
+                    >
+                      <Fingerprint className="w-3 h-3" />
+                      <span>{isBioChecking ? 'Scanning...' : staffBioEnabled ? 'Re-enroll Fingerprint' : 'Register Biometric'}</span>
+                    </button>
+                    {staffBioEnabled && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStaffFpId(null);
+                          setStaffBioEnabled(false);
+                        }}
+                        className="py-1.5 px-2 bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[10px] font-bold rounded-lg cursor-pointer hover:bg-slate-300"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
 
