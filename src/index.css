@@ -61,6 +61,25 @@ body {
   animation: fade-in-up 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+@keyframes barcode-editable-highlight {
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5);
+    border-color: rgba(16, 185, 129, 0.8);
+  }
+  40% {
+    box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.25);
+    border-color: rgba(16, 185, 129, 0.9);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+    border-color: inherit;
+  }
+}
+
+.animate-barcode-highlight {
+  animation: barcode-editable-highlight 2.2s cubic-bezier(0.4, 0, 0.2, 1) 2;
+}
+
 /* Native Capacitor MLKit Barcode Scanner Transparent Background */
 html.barcode-scanner-active,
 body.barcode-scanner-active,

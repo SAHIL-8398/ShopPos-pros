@@ -5,6 +5,7 @@
 
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 
 const APP_DIR_NAME = 'ShopPOS Pro';
 const INVOICES_DIR = `${APP_DIR_NAME}/Invoices`;
@@ -12,6 +13,7 @@ const PRODUCT_IMAGES_DIR = `${APP_DIR_NAME}/ProductImages`;
 const QUOTATIONS_DIR = `${APP_DIR_NAME}/Quotations`;
 const CHALLANS_DIR = `${APP_DIR_NAME}/Challans`;
 const BARCODES_DIR = `${APP_DIR_NAME}/Barcodes`;
+const BACKUPS_DIR = `${APP_DIR_NAME}/Backups`;
 
 export interface SaveFileResult {
   success: boolean;
@@ -29,6 +31,7 @@ export interface SaveFileResult {
  * - ShopPOS Pro/Quotations/
  * - ShopPOS Pro/Challans/
  * - ShopPOS Pro/Barcodes/
+ * - ShopPOS Pro/Backups/
  */
 export async function initAppStorage(): Promise<boolean> {
   if (!Capacitor.isNativePlatform()) {
@@ -43,6 +46,7 @@ export async function initAppStorage(): Promise<boolean> {
       QUOTATIONS_DIR,
       CHALLANS_DIR,
       BARCODES_DIR,
+      BACKUPS_DIR,
     ];
 
     for (const dir of directories) {
@@ -262,6 +266,146 @@ export async function downloadOrSaveDataFile(params: {
     return {
       success: false,
       message: webErr?.message || 'Failed to download file.',
+    };
+  }
+}
+
+/**
+ * Save a complete JSON backup of the application database directly into ShopPOS Pro/Backups/
+ */
+export async function saveBackupJsonToAppFolder(
+  jsonContent: string,
+  filename?: string
+): Promise<SaveFileResult> {
+  const finalFilename = filename || `shoppos_backup_${new Date().toISOString().slice(0, 10)}_${Date.now()}.json`;
+
+  if (Capacitor.isNativePlatform()) {
+    try {
+      await initAppStorage();
+      const filePath = `${BACKUPS_DIR}/${finalFilename}`;
+
+      const writeResult = await Filesystem.writeFile({
+        path: filePath,
+        data: jsonContent,
+        directory: Directory.Documents,
+        encoding: Encoding.UTF8,
+        recursive: true,
+      });
+
+      return {
+        success: true,
+        uri: writeResult.uri,
+        path: filePath,
+        isNative: true,
+      };
+    } catch (error: any) {
+      console.error('[Capacitor Filesystem] Failed to write backup to native storage:', error);
+      return {
+        success: false,
+        isNative: true,
+        error: error.message || 'Failed to save backup to device storage',
+      };
+    }
+  }
+
+  // Web Browser fallback
+  return {
+    success: true,
+    isNative: false,
+    path: finalFilename,
+  };
+}
+
+/**
+ * Complete Database Export & Native Share workflow:
+ * 1. Saves full database JSON to Documents/ShopPOS Pro/Backups/ on native Android.
+ * 2. Launches native Share Sheet (@capacitor/share) to send to Google Drive, Email, WhatsApp, etc.
+ * 3. Fallbacks seamlessly to Web download & navigator.share on web browsers.
+ */
+export async function exportAndShareDatabaseBackup(dbData: any): Promise<{
+  success: boolean;
+  message: string;
+  uri?: string;
+  filename: string;
+}> {
+  const today = new Date().toISOString().slice(0, 10);
+  const timestamp = Date.now();
+  const filename = `shoppos_backup_${today}_${timestamp}.json`;
+  const jsonString = JSON.stringify(dbData, null, 2);
+
+  // Save timestamp for UI
+  const nowIso = new Date().toISOString();
+  localStorage.setItem('shoppos_last_backup', nowIso);
+
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const saveRes = await saveBackupJsonToAppFolder(jsonString, filename);
+      if (!saveRes.success) {
+        throw new Error(saveRes.error || 'Filesystem write failure');
+      }
+
+      // Prompt native Share sheet so user can send to Google Drive, WhatsApp, Email, or File Manager
+      try {
+        await Share.share({
+          title: 'ShopPOS Pro Database Backup',
+          text: `ShopPOS Pro Database Backup exported on ${new Date().toLocaleString()}.\nKeep this file safe to restore all products, sales, and accounts.`,
+          url: saveRes.uri,
+          dialogTitle: 'Save / Share ShopPOS Database Backup',
+        });
+      } catch (shareErr: any) {
+        // User may have dismissed share dialog, which is acceptable since file is saved
+        console.warn('Share sheet was dismissed or failed:', shareErr);
+      }
+
+      return {
+        success: true,
+        message: `Backup saved to Documents/ShopPOS Pro/Backups/${filename}`,
+        uri: saveRes.uri,
+        filename,
+      };
+    } catch (err: any) {
+      console.error('Native backup export error:', err);
+    }
+  }
+
+  // Web / Fallback flow: Download JSON file and try navigator.share if supported
+  try {
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(() => {
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }, 1000);
+
+    // Optional Web Share API if supported
+    if (navigator.share && navigator.canShare && navigator.canShare({ files: [new File([blob], filename, { type: 'application/json' })] })) {
+      try {
+        await navigator.share({
+          title: 'ShopPOS Pro Database Backup',
+          text: `ShopPOS Pro Database Backup (${today})`,
+          files: [new File([blob], filename, { type: 'application/json' })],
+        });
+      } catch {
+        // Ignore user cancellation
+      }
+    }
+
+    return {
+      success: true,
+      message: `Backup file "${filename}" generated and downloaded successfully.`,
+      filename,
+    };
+  } catch (webErr: any) {
+    return {
+      success: false,
+      message: webErr?.message || 'Failed to export backup JSON.',
+      filename,
     };
   }
 }

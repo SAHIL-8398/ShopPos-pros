@@ -8,7 +8,7 @@ import { jsPDF } from 'jspdf';
 import JsBarcode from 'jsbarcode';
 import { Share2, FileDown, MessageCircle, RefreshCw, X, Check, FolderCheck, Printer, Bluetooth } from 'lucide-react';
 import { Sale, Settings } from '../types';
-import { formatCurrency, copyToClipboard, formatDate, generateUpiQrDataUrl } from '../utils';
+import { formatCurrency, copyToClipboard, formatDate, generateUpiQrDataUrl, getPdfCurrency } from '../utils';
 import { useDialog } from '../context/DialogContext';
 import { savePdfToAppFolder, isNativeCapacitor } from '../services/nativeStorage';
 import { printPdfDocument, sharePdfDocument, printThermalReceipt } from '../services/printService';
@@ -184,11 +184,11 @@ export function buildReceiptText(sale: Sale, settings: Settings): string {
   r += line + '\n';
   sale.items.forEach(i => {
     r += `${i.name}\n`;
-    const cur = settings.currency || 'Rs.';
+    const cur = getPdfCurrency(settings.currency);
     r += lr(`  ${i.qty}x ${cur}${formatCurrency(i.price)}`, `${cur}${formatCurrency(i.price * i.qty)}`) + '\n';
   });
   
-  const cur = settings.currency || 'Rs.';
+  const cur = getPdfCurrency(settings.currency);
   r += line + '\n';
   r += lr('Subtotal', `${cur}${formatCurrency(sale.subtotal)}`) + '\n';
   
@@ -539,7 +539,7 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
     doc.setTextColor(21, 128, 61); // green-700
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(6.5);
-    doc.text('🔒 SECURED ORIGINAL (READ-ONLY)', 170, 43, { align: 'center' });
+    doc.text('SECURED ORIGINAL (READ-ONLY)', 170, 43, { align: 'center' });
 
     // Horizontal separator line
     doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2]);
@@ -708,7 +708,7 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
       y += 5.5;
     };
 
-    const cur = settings.currency || 'Rs.';
+    const cur = getPdfCurrency(settings.currency);
     renderCalculationLine('Subtotal Amt:', `${cur}${formatCurrency(sale.subtotal)}`);
     
     if (sale.discount > 0) {
@@ -746,8 +746,7 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
     
     if (sale.paymentMethod === 'split') {
       const split = sale.splitDetails || { cashAmount: 0, upiAmount: 0 };
-      const cur = settings.currency || 'Rs.';
-      doc.text(`Payment channels used: SPLIT (💵 Cash ${cur}${split.cashAmount} / 📱 UPI ${cur}${split.upiAmount})`, 15, notesY);
+      doc.text(`Payment channels used: SPLIT (Cash ${cur}${split.cashAmount} / UPI ${cur}${split.upiAmount})`, 15, notesY);
     } else {
       doc.text(`Payment channel used: ${(sale.paymentMethod || 'cash').toUpperCase()}`, 15, notesY);
     }

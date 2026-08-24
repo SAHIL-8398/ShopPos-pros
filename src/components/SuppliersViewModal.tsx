@@ -27,13 +27,13 @@ import {
   ChevronRight,
   Edit3,
   SlidersHorizontal,
-  DollarSign,
+  IndianRupee,
   AlertCircle,
   Copy,
   Receipt,
 } from 'lucide-react';
 import { Supplier, Product, PurchaseOrder, PurchaseItem } from '../types';
-import { formatCurrency, formatDate, generateId, getTodayDateString, copyToClipboard } from '../utils';
+import { formatCurrency, formatDate, generateId, getTodayDateString, copyToClipboard, cleanIndianPhone, isValidEmail } from '../utils';
 import { useDialog } from '../context/DialogContext';
 
 interface SuppliersViewModalProps {
@@ -45,6 +45,8 @@ interface SuppliersViewModalProps {
   onDeleteSupplier: (id: string) => Promise<void> | void;
   onSavePurchaseOrder: (poData: { supplierId: string; items: PurchaseItem[]; total: number }) => Promise<void> | void;
   currency?: string;
+  initialTab?: 'list' | 'supplier_detail' | 'po' | 'hist' | 'suggestions';
+  lowStockDefault?: number;
 }
 
 export const SuppliersViewModal: React.FC<SuppliersViewModalProps> = ({
@@ -56,11 +58,13 @@ export const SuppliersViewModal: React.FC<SuppliersViewModalProps> = ({
   onDeleteSupplier,
   onSavePurchaseOrder,
   currency = 'Rs.',
+  initialTab = 'list',
+  lowStockDefault = 10,
 }) => {
   const { showAlert, showConfirm } = useDialog();
 
-  // Navigation tab state: 'list' (directory), 'supplier_detail' (specific supplier + PO history), 'po' (create PO), 'hist' (all PO history)
-  const [activeTab, setActiveTab] = useState<'list' | 'supplier_detail' | 'po' | 'hist'>('list');
+  // Navigation tab state: 'list' (directory), 'supplier_detail' (specific supplier + PO history), 'po' (create PO), 'hist' (all PO history), 'suggestions' (low stock auto-reorder)
+  const [activeTab, setActiveTab] = useState<'list' | 'supplier_detail' | 'po' | 'hist' | 'suggestions'>(initialTab);
   const [selectedSupplierId, setSelectedSupplierId] = useState<string | null>(null);
 
   // Supplier Form state
@@ -205,6 +209,117 @@ export const SuppliersViewModal: React.FC<SuppliersViewModalProps> = ({
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   }, [selectedSupplierId, purchases]);
 
+  // Low stock products & auto-purchase suggestions calculation
+  const lowStockThresholdDefault = lowStockDefault || 10;
+
+  const lowStockProducts = useMemo(() => {
+    return products.filter((p) => {
+      const limit = p.lowStockAlert !== null && p.lowStockAlert !== undefined ? p.lowStockAlert : lowStockThresholdDefault;
+      return p.qty <= limit;
+    });
+  }, [products, lowStockThresholdDefault]);
+
+  // Group low stock items by supplier
+  const suggestionsBySupplier = useMemo(() => {
+    const map = new Map<string, {
+      supplier: Supplier | null;
+      supplierId: string;
+      supplierName: string;
+      supplierPhone?: string;
+      items: {
+        product: Product;
+        currentQty: number;
+        threshold: number;
+        suggestedQty: number;
+        buyPrice: number;
+        subtotal: number;
+      }[];
+      totalCost: number;
+      totalItems: number;
+    }>();
+
+    lowStockProducts.forEach((p) => {
+      const sId = p.supplierId || 'unassigned';
+      const sObj = p.supplierId ? (suppliersMap.get(p.supplierId) || null) : null;
+      const threshold = p.lowStockAlert !== null && p.lowStockAlert !== undefined ? p.lowStockAlert : lowStockThresholdDefault;
+      const suggestedQty = Math.max(10, Math.ceil((threshold * 2) - p.qty));
+      const buyPrice = p.buyPrice || 0;
+      const subtotal = suggestedQty * buyPrice;
+
+      if (!map.has(sId)) {
+        map.set(sId, {
+          supplier: sObj,
+          supplierId: sId,
+          supplierName: sObj ? sObj.name : 'Unassigned / General Supplier',
+          supplierPhone: sObj?.phone,
+          items: [],
+          totalCost: 0,
+          totalItems: 0,
+        });
+      }
+
+      const grp = map.get(sId)!;
+      grp.items.push({
+        product: p,
+        currentQty: p.qty,
+        threshold,
+        suggestedQty,
+        buyPrice,
+        subtotal,
+      });
+      grp.totalCost += subtotal;
+      grp.totalItems += 1;
+    });
+
+    return Array.from(map.values()).sort((a, b) => b.totalCost - a.totalCost);
+  }, [lowStockProducts, lowStockThresholdDefault, suppliersMap]);
+
+  // Generate Draft PO for single supplier
+  const handleGenerateDraftPOForSupplier = (supplierGroup: typeof suggestionsBySupplier[0]) => {
+    const targetSupplierId = supplierGroup.supplierId !== 'unassigned' ? supplierGroup.supplierId : (suppliers[0]?.id || '');
+    setPoSupplierId(targetSupplierId);
+    setPoItems(
+      supplierGroup.items.map((it) => ({
+        id: it.product.id,
+        name: it.product.name,
+        qty: it.suggestedQty,
+        buyPrice: it.buyPrice,
+        unit: it.product.unit || 'pcs',
+      }))
+    );
+    setReorderSourceNotice(`Auto-generated from ${supplierGroup.items.length} low-stock alert items for ${supplierGroup.supplierName}`);
+    setActiveTab('po');
+    showToast(`Loaded ${supplierGroup.items.length} low-stock items into Draft Purchase Order!`);
+  };
+
+  // Generate and save draft purchase orders for all suppliers
+  const handleGenerateAllDraftPOs = async () => {
+    let createdCount = 0;
+    for (const group of suggestionsBySupplier) {
+      if (group.supplierId !== 'unassigned' && group.items.length > 0) {
+        const poPayload = {
+          supplierId: group.supplierId,
+          items: group.items.map((it) => ({
+            id: it.product.id,
+            name: it.product.name,
+            qty: it.suggestedQty,
+            buyPrice: it.buyPrice,
+            unit: it.product.unit || 'pcs',
+          })),
+          total: group.totalCost,
+        };
+        await onSavePurchaseOrder(poPayload);
+        createdCount++;
+      }
+    }
+    if (createdCount > 0) {
+      showToast(`Created ${createdCount} draft purchase orders successfully!`);
+      setActiveTab('hist');
+    } else {
+      await showAlert('No suppliers assigned to current low-stock items. Please assign suppliers to auto-generate POs.', 'No Assigned Suppliers');
+    }
+  };
+
   // Open Supplier Edit / Create form
   const handleOpenSupplierForm = (s: Supplier | null) => {
     if (s) {
@@ -229,11 +344,20 @@ export const SuppliersViewModal: React.FC<SuppliersViewModalProps> = ({
       await showAlert('Supplier Name is required!', 'Required Field');
       return;
     }
+    const cleanedPhone = cleanIndianPhone(supPhone);
+    if (supPhone.trim() && cleanedPhone.length !== 10) {
+      await showAlert('Supplier contact phone must be exactly 10 digits!', 'Invalid Phone Number');
+      return;
+    }
+    if (supEmail.trim() && !isValidEmail(supEmail)) {
+      await showAlert('Please enter a valid email address for the supplier!', 'Invalid Email');
+      return;
+    }
 
     await onSaveSupplier({
       id: supFormId || undefined,
       name: supName.trim(),
-      phone: supPhone.trim(),
+      phone: cleanedPhone,
       email: supEmail.trim(),
       address: supAddress.trim(),
     });
@@ -494,6 +618,23 @@ export const SuppliersViewModal: React.FC<SuppliersViewModalProps> = ({
             >
               <RotateCcw className="w-3.5 h-3.5" />
               <span>PO History ({purchases.length})</span>
+            </button>
+
+            <button
+              id="tab-po-suggestions"
+              type="button"
+              onClick={() => {
+                setActiveTab('suggestions');
+                setIsSupFormOpen(false);
+              }}
+              className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                activeTab === 'suggestions' && !isSupFormOpen
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'text-amber-700 dark:text-amber-400 hover:text-amber-900 dark:hover:text-amber-200'
+              }`}
+            >
+              <Zap className="w-3.5 h-3.5 fill-current" />
+              <span>Auto-PO {lowStockProducts.length > 0 && `(${lowStockProducts.length})`}</span>
             </button>
           </div>
         </div>
@@ -1426,6 +1567,121 @@ export const SuppliersViewModal: React.FC<SuppliersViewModalProps> = ({
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════════════════
+              TAB 4: AUTO-PO / LOW-STOCK REORDER SUGGESTIONS
+             ══════════════════════════════════════════════════════════ */}
+          {activeTab === 'suggestions' && !isSupFormOpen && (
+            <div className="space-y-4 animate-fade-in">
+              {/* Header banner with one-tap batch create */}
+              <div className="bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-indigo-500/10 border border-amber-300 dark:border-amber-900/60 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="p-1.5 rounded-xl bg-amber-500 text-white shadow-xs">
+                      <Zap className="w-4 h-4 fill-current" />
+                    </span>
+                    <h4 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white uppercase tracking-wider">
+                      Auto-Replenishment Suggestions
+                    </h4>
+                  </div>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1 font-medium">
+                    Found <span className="font-black text-amber-600 dark:text-amber-400">{lowStockProducts.length} items</span> below low-stock threshold across {suggestionsBySupplier.length} supplier group{suggestionsBySupplier.length === 1 ? '' : 's'}.
+                  </p>
+                </div>
+
+                {suggestionsBySupplier.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleGenerateAllDraftPOs}
+                    className="px-3.5 py-2 bg-gradient-to-r from-amber-600 to-indigo-600 hover:from-amber-700 hover:to-indigo-700 text-white rounded-xl text-xs font-black flex items-center justify-center gap-2 shadow-md cursor-pointer transition-all active:scale-95 shrink-0"
+                  >
+                    <Zap className="w-3.5 h-3.5 fill-current" />
+                    <span>Auto-Create All Draft POs</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Suggestions grouped by supplier */}
+              {suggestionsBySupplier.length > 0 ? (
+                <div className="space-y-4">
+                  {suggestionsBySupplier.map((group) => {
+                    return (
+                      <div
+                        key={group.supplierId}
+                        className="bg-white dark:bg-slate-850 border border-slate-200 dark:border-slate-750 rounded-2xl p-4 shadow-xs space-y-3"
+                      >
+                        {/* Group Header */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-750 pb-3">
+                          <div>
+                            <h5 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5">
+                              <Factory className="w-4 h-4 text-indigo-500" />
+                              <span>{group.supplierName}</span>
+                              {group.supplierPhone && (
+                                <span className="text-[10px] font-bold text-slate-400">
+                                  ({group.supplierPhone})
+                                </span>
+                              )}
+                            </h5>
+                            <p className="text-[10px] text-slate-500 font-bold mt-0.5">
+                              {group.items.length} low-stock item{group.items.length === 1 ? '' : 's'} • Est. PO Total: <span className="text-emerald-600 dark:text-emerald-400 font-black">{currency}{formatCurrency(group.totalCost)}</span>
+                            </p>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleGenerateDraftPOForSupplier(group)}
+                            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1.5 shadow-xs cursor-pointer transition-all active:scale-95 shrink-0"
+                          >
+                            <ShoppingBag className="w-3.5 h-3.5" />
+                            <span>⚡ Generate Draft PO</span>
+                          </button>
+                        </div>
+
+                        {/* Low stock items in this group */}
+                        <div className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+                          {group.items.map((it) => (
+                            <div key={it.product.id} className="py-2 flex items-center justify-between gap-2">
+                              <div className="min-w-0 flex-1">
+                                <div className="font-black text-slate-800 dark:text-slate-200 truncate">
+                                  {it.product.name}
+                                </div>
+                                <div className="text-[10px] text-slate-400 flex items-center gap-2 mt-0.5">
+                                  <span className="text-amber-600 font-bold">
+                                    Current Stock: {it.currentQty} {it.product.unit || 'pcs'} (Alert: {it.threshold})
+                                  </span>
+                                  <span>•</span>
+                                  <span>Unit Buy: {currency}{formatCurrency(it.buyPrice)}</span>
+                                </div>
+                              </div>
+
+                              <div className="text-right shrink-0">
+                                <span className="text-[9px] font-bold text-slate-400 uppercase block">Suggested Order</span>
+                                <span className="font-black text-indigo-600 dark:text-indigo-400 text-xs">
+                                  +{it.suggestedQty} {it.product.unit || 'pcs'} ({currency}{formatCurrency(it.subtotal)})
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-center py-12 px-4 bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-3xl space-y-2">
+                  <div className="w-12 h-12 mx-auto rounded-2xl bg-emerald-100 dark:bg-emerald-950 text-emerald-600 flex items-center justify-center">
+                    <Check className="w-6 h-6" />
+                  </div>
+                  <p className="text-sm font-black text-slate-800 dark:text-slate-200">
+                    All Products Sufficiently Stocked!
+                  </p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
+                    No products are currently below their low-stock alert thresholds.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 

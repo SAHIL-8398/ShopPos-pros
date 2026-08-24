@@ -9,10 +9,141 @@ import QRCode from 'qrcode';
 import { languagePacks } from './context/LocalizationContext';
 import { savePdfToAppFolder, isNativeCapacitor, downloadOrSaveDataFile } from './services/nativeStorage';
 
-// Format numbers with 2 decimal places unless they are integers
+export interface IndianState {
+  code: string;
+  name: string;
+  type: 'State' | 'UT';
+}
+
+export const INDIAN_STATES: IndianState[] = [
+  { code: '01', name: 'Jammu and Kashmir', type: 'UT' },
+  { code: '02', name: 'Himachal Pradesh', type: 'State' },
+  { code: '03', name: 'Punjab', type: 'State' },
+  { code: '04', name: 'Chandigarh', type: 'UT' },
+  { code: '05', name: 'Uttarakhand', type: 'State' },
+  { code: '06', name: 'Haryana', type: 'State' },
+  { code: '07', name: 'Delhi', type: 'UT' },
+  { code: '08', name: 'Rajasthan', type: 'State' },
+  { code: '09', name: 'Uttar Pradesh', type: 'State' },
+  { code: '10', name: 'Bihar', type: 'State' },
+  { code: '11', name: 'Sikkim', type: 'State' },
+  { code: '12', name: 'Arunachal Pradesh', type: 'State' },
+  { code: '13', name: 'Nagaland', type: 'State' },
+  { code: '14', name: 'Manipur', type: 'State' },
+  { code: '15', name: 'Mizoram', type: 'State' },
+  { code: '16', name: 'Tripura', type: 'State' },
+  { code: '17', name: 'Meghalaya', type: 'State' },
+  { code: '18', name: 'Assam', type: 'State' },
+  { code: '19', name: 'West Bengal', type: 'State' },
+  { code: '20', name: 'Jharkhand', type: 'State' },
+  { code: '21', name: 'Odisha', type: 'State' },
+  { code: '22', name: 'Chhattisgarh', type: 'State' },
+  { code: '23', name: 'Madhya Pradesh', type: 'State' },
+  { code: '24', name: 'Gujarat', type: 'State' },
+  { code: '26', name: 'Dadra and Nagar Haveli and Daman and Diu', type: 'UT' },
+  { code: '27', name: 'Maharashtra', type: 'State' },
+  { code: '29', name: 'Karnataka', type: 'State' },
+  { code: '30', name: 'Goa', type: 'State' },
+  { code: '31', name: 'Lakshadweep', type: 'UT' },
+  { code: '32', name: 'Kerala', type: 'State' },
+  { code: '33', name: 'Tamil Nadu', type: 'State' },
+  { code: '34', name: 'Puducherry', type: 'UT' },
+  { code: '35', name: 'Andaman and Nicobar Islands', type: 'UT' },
+  { code: '36', name: 'Telangana', type: 'State' },
+  { code: '37', name: 'Andhra Pradesh', type: 'State' },
+  { code: '38', name: 'Ladakh', type: 'UT' },
+  { code: '97', name: 'Other Territory', type: 'UT' },
+];
+
+// Helper to validate Indian GSTIN (15 characters)
+export function isValidGstin(gstin: string): boolean {
+  if (!gstin) return false;
+  const clean = gstin.trim().toUpperCase();
+  return /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(clean);
+}
+
+// Helper to validate Indian FSSAI (14 digits)
+export function isValidFssai(fssai: string): boolean {
+  if (!fssai) return false;
+  const clean = fssai.trim();
+  return /^\d{14}$/.test(clean);
+}
+
+// Helper to clean/sanitize Indian phone numbers to strictly max 10 digits
+export function cleanIndianPhone(phone: string): string {
+  if (!phone) return '';
+  let digits = phone.replace(/\D/g, '');
+  if (digits.length === 12 && digits.startsWith('91')) {
+    digits = digits.slice(2);
+  } else if (digits.length === 11 && digits.startsWith('0')) {
+    digits = digits.slice(1);
+  }
+  return digits.slice(0, 10);
+}
+
+// Helper to validate 10-digit Indian Mobile number (starts with 6, 7, 8, or 9)
+export function isValidIndianPhone(phone: string): boolean {
+  if (!phone) return false;
+  const clean = cleanIndianPhone(phone);
+  return /^[6-9]\d{9}$/.test(clean);
+}
+
+// Helper to validate email format
+export function isValidEmail(email: string): boolean {
+  if (!email) return false;
+  const clean = email.trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean);
+}
+
+// Helper to validate UPI VPA ID (e.g. merchant@icici, mobile@paytm)
+export function isValidUpiId(upi: string): boolean {
+  if (!upi) return false;
+  const clean = upi.trim();
+  return /^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/.test(clean);
+}
+
+// Helper to validate Indian HSN / SAC Code (2, 4, 6, or 8 digits)
+export function isValidHsn(hsn: string): boolean {
+  if (!hsn) return false;
+  const clean = hsn.trim();
+  return /^\d{2,8}$/.test(clean);
+}
+
+// Helper to validate Indian Postal PIN Code (6 digits, non-zero starting)
+export function isValidPinCode(pincode: string): boolean {
+  if (!pincode) return false;
+  const clean = pincode.trim();
+  return /^[1-9][0-9]{5}$/.test(clean);
+}
+
+// Helper to validate Indian Vehicle Registration (e.g. MH01AB1234, DL3CAB1234)
+export function isValidVehicleNumber(vehicleNo: string): boolean {
+  if (!vehicleNo) return false;
+  const clean = vehicleNo.trim().toUpperCase().replace(/[\s-]/g, '');
+  return /^[A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{4}$/.test(clean) || (clean.length >= 6 && clean.length <= 13);
+}
+
+// Helper to normalize and format Indian phone number
+export function formatIndianPhone(phone: string): string {
+  if (!phone) return '';
+  const digits = cleanIndianPhone(phone);
+  if (digits.length === 10) {
+    return `+91 ${digits.slice(0, 5)} ${digits.slice(5)}`;
+  }
+  return phone;
+}
+
+// Format numbers in Indian Numbering System (Lakhs & Crores, e.g. 1,23,456.78)
 export function formatCurrency(n: number): string {
   const v = Number(n) || 0;
-  return v % 1 === 0 ? v.toString() : v.toFixed(2);
+  try {
+    return v.toLocaleString('en-IN', {
+      minimumFractionDigits: v % 1 === 0 ? 0 : 2,
+      maximumFractionDigits: 2,
+    });
+  } catch {
+    return v % 1 === 0 ? v.toString() : v.toFixed(2);
+  }
 }
 
 // Format any Date or date string to dd/mm/yyyy
@@ -431,6 +562,28 @@ export function translate(key: string, lang = 'English'): string {
   return dictionary[key] || languagePacks['English'][key] || key;
 }
 
+/**
+ * Safely format currency symbol for PDF generators (standard jsPDF fonts) and Thermal ESC/POS printers.
+ * Standard PDF fonts (Helvetica, Times, Courier) only support WinAnsi/Latin-1 encoding.
+ * Unicode characters like '₹' (U+20B9) corrupt into '¹' (superscript 1) in PDF standard fonts.
+ * This converts '₹' to 'Rs.' so amounts render cleanly as 'Rs.800' instead of '¹800'.
+ */
+export function getPdfCurrency(currency?: string): string {
+  if (!currency) return 'Rs.';
+  const clean = currency.replace(/₹/g, 'Rs.').trim();
+  return clean || 'Rs.';
+}
+
+/**
+ * Strips emojis and unsupported multi-byte characters that cause encoding artifacts in jsPDF standard fonts.
+ */
+export function cleanPdfText(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{1F600}-\u{1F64F}]|[\u{1F680}-\u{1F6FF}]/gu, '')
+    .replace(/₹/g, 'Rs.');
+}
+
 export function generateQuotationPDF(
   cart: { name: string; price: number; qty: number; unit?: string }[],
   customer: { name: string; phone: string; address: string },
@@ -446,7 +599,7 @@ export function generateQuotationPDF(
     creator: "ShopPOS Secure Engine",
     keywords: "non-editable, secured, original, quotation"
   });
-  const cur = settings.currency || 'Rs.';
+  const cur = getPdfCurrency(settings.currency);
   
   // Header Style Banner
   doc.setFillColor(79, 70, 229); // indigo-600
@@ -498,7 +651,7 @@ export function generateQuotationPDF(
   doc.setTextColor(21, 128, 61); // green-700
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(6.5);
-  doc.text('🔒 SECURED ORIGINAL (READ-ONLY)', 40, 73, { align: 'center' });
+  doc.text('SECURED ORIGINAL (READ-ONLY)', 40, 73, { align: 'center' });
   doc.setTextColor(30, 41, 59); // reset
   
   // Customer details block
@@ -545,11 +698,11 @@ export function generateQuotationPDF(
     
     doc.text(item.name, 18, y + 5.5);
     doc.text(`${item.qty} ${item.unit || 'pcs'}`, 115, y + 5.5, { align: 'center' });
-    doc.text(`${cur} ${formatCurrency(item.price)}`, 145, y + 5.5, { align: 'right' });
+    doc.text(`${cur}${formatCurrency(item.price)}`, 145, y + 5.5, { align: 'right' });
     
     const rowTotal = item.price * item.qty;
     subtotal += rowTotal;
-    doc.text(`${cur} ${formatCurrency(rowTotal)}`, 190, y + 5.5, { align: 'right' });
+    doc.text(`${cur}${formatCurrency(rowTotal)}`, 190, y + 5.5, { align: 'right' });
   });
   
   // Total summary block
@@ -562,7 +715,7 @@ export function generateQuotationPDF(
   doc.text('GRAND TOTAL ESTIMATE:', 115, y + 3);
   doc.setFontSize(12);
   doc.setTextColor(79, 70, 229);
-  doc.text(`${cur} ${formatCurrency(subtotal)}`, 190, y + 3, { align: 'right' });
+  doc.text(`${cur}${formatCurrency(subtotal)}`, 190, y + 3, { align: 'right' });
   
   // Terms & signature footer block
   y += 18;
@@ -651,7 +804,7 @@ export function generateDeliveryChallanPDF(
   doc.setTextColor(21, 128, 61); // green-700
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(6.5);
-  doc.text('🔒 SECURED ORIGINAL (READ-ONLY)', 40, 73, { align: 'center' });
+  doc.text('SECURED ORIGINAL (READ-ONLY)', 40, 73, { align: 'center' });
   doc.setTextColor(30, 41, 59); // reset
   
   // Customer details block
@@ -968,7 +1121,7 @@ export function generatePurchaseOrderPDF(
   doc.setTextColor(51, 65, 85);
   doc.setFont('helvetica', 'normal');
 
-  const cur = shopInfo.currency || 'Rs.';
+  const cur = getPdfCurrency(shopInfo.currency);
   po.items.forEach((item) => {
     y += 8;
     if (y > 270) {
@@ -1103,7 +1256,7 @@ export function generateCreditDebitNotePDF(
   doc.setTextColor(51, 65, 85);
   doc.text(`Reason: ${note.reason}`, 20, y + 18);
 
-  const cur = shopInfo.currency || 'Rs.';
+  const cur = getPdfCurrency(shopInfo.currency);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(13);
   doc.setTextColor(note.type === 'Credit Note' ? 225 : 79, note.type === 'Credit Note' ? 29 : 70, note.type === 'Credit Note' ? 72 : 229);

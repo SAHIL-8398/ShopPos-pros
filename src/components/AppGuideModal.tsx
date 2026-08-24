@@ -30,7 +30,7 @@ import {
   Tag,
   Clock,
   Sliders,
-  DollarSign,
+  IndianRupee,
   Truck,
   Building2,
   Receipt,

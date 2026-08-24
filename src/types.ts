@@ -34,7 +34,13 @@ export interface Product {
   hasAltUnit?: boolean;
   altUnitName?: string;
   altUnitFactor?: number;
+  secondaryUnitName?: string; // e.g. "piece", "gram", "strip"
+  conversionFactor?: number; // e.g. 24, meaning 1 base unit (box) = 24 secondary units (piece)
+  secondaryUnitPrice?: number; // optional custom sell price per secondary unit
+  branchId?: string; // optional branch isolation identifier
   bomItems?: { productId: string; qtyNeeded: number }[];
+  isGeneratedBarcode?: boolean;
+  barcodeType?: 'scanned' | 'generated';
 }
 
 export interface SaleItem {
@@ -45,6 +51,9 @@ export interface SaleItem {
   buyPrice: number;
   qty: number;
   unit: string;
+  selectedUnit?: string; // unit used when item was sold (e.g. 'pcs' vs 'box')
+  unitConversionRatio?: number; // multiplier applied to base stock (e.g. 1/24)
+  baseQtyDeduction?: number; // actual base stock units deducted
   returnedQty?: number;
 }
 
@@ -58,6 +67,7 @@ export interface Sale {
   customerAddress: string;
   staffId: string;
   staffName: string;
+  branchId?: string; // branch where sale took place
   items: SaleItem[];
   subtotal: number;
   discount: number;
@@ -100,6 +110,7 @@ export interface Customer {
   khataBalance?: number; // running balance (positive = they owe)
   khataLedger?: KhataEntry[];
   loyaltyPoints?: number;
+  lastReminderSent?: string; // ISO timestamp of last payment reminder
 }
 
 export interface Expense {
@@ -175,6 +186,11 @@ export interface Settings {
   financialYear?: string; // e.g. 2026-27
   gstEnabled?: boolean;
   defaultGstPct?: number;
+
+  // Loyalty Program Settings
+  loyaltyEnabled?: boolean; // Enable or disable loyalty rewards
+  loyaltyPointValue?: number; // Value of 1 point in currency (e.g. 1 point = ₹1, default: 1)
+  loyaltyPointsPerSpend?: number; // Rs. spend required to earn 1 point (default: 50, meaning ₹50 spend = 1 point)
 
   // Bill Format Settings
   preferredReceiptPaperSize?: '58mm' | '80mm';

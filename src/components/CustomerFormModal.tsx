@@ -4,26 +4,32 @@
  */
 
 import React, { useState } from 'react';
-import { X, User, Phone, Mail, MapPin, Trash2, Calendar, ClipboardList, CheckCircle, AlertCircle, Save, Edit3, Award } from 'lucide-react';
-import { Customer, Sale } from '../types';
-import { formatCurrency, generateId, formatDate } from '../utils';
+import { X, User, Phone, Mail, MapPin, Trash2, Calendar, ClipboardList, CheckCircle, AlertCircle, Save, Edit3, Award, MessageCircle, Check } from 'lucide-react';
+import { Customer, Sale, Settings } from '../types';
+import { formatCurrency, generateId, formatDate, cleanIndianPhone, isValidIndianPhone, isValidEmail } from '../utils';
+import { Share } from '@capacitor/share';
+import { Capacitor } from '@capacitor/core';
 
 interface CustomerFormModalProps {
   customer: Customer | null; // null means we are adding a new customer
   sales: Sale[];
+  settings?: Settings;
   onClose: () => void;
   onSave: (customerData: Partial<Customer>) => void;
   onDelete?: (id: string) => void;
   onMarkCreditPaid?: (billId: string) => void;
+  onSendPaymentReminder?: (customerId: string, reminderTimestamp: string) => Promise<void> | void;
 }
 
 export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
   customer,
   sales,
+  settings,
   onClose,
   onSave,
   onDelete,
   onMarkCreditPaid,
+  onSendPaymentReminder,
 }) => {
   const isEditMode = !!customer;
 
@@ -52,10 +58,54 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
 
   const totalOutstanding = pendingCreditBills.reduce((sum, s) => sum + s.total, 0);
 
+  const [isReminderSent, setIsReminderSent] = useState<boolean>(false);
+
+  const handleSendPaymentReminder = async () => {
+    if (!customer) return;
+    const shopName = settings?.shopName || 'Our Store';
+    const upiPart = settings?.upi ? `\n💳 *Pay via UPI:* ${settings.upi}` : '';
+    const reminderMsg = `Namaste ${customer.name} ji 🙏,\n\nThis is a friendly payment reminder from *${shopName}* regarding your pending Khata / credit balance of *₹${formatCurrency(totalOutstanding)}*.\n\nKindly clear the pending dues at your earliest convenience.${upiPart}\n\nThank you for choosing ${shopName}!`;
+
+    const nowIso = new Date().toISOString();
+    if (onSendPaymentReminder) {
+      await onSendPaymentReminder(customer.id, nowIso);
+    }
+
+    setIsReminderSent(true);
+    setTimeout(() => setIsReminderSent(false), 3000);
+
+    try {
+      if (Capacitor.isNativePlatform()) {
+        await Share.share({
+          title: `Khata Payment Reminder - ${shopName}`,
+          text: reminderMsg,
+          dialogTitle: `Send Reminder to ${customer.name} via WhatsApp`,
+        });
+      } else if (customer.phone) {
+        const cleanPhone = customer.phone.replace(/\D/g, '').slice(-10);
+        window.open(`https://wa.me/91${cleanPhone}?text=${encodeURIComponent(reminderMsg)}`, '_blank', 'noopener,noreferrer');
+      } else {
+        await navigator.clipboard.writeText(reminderMsg);
+        alert(`Reminder message copied to clipboard for ${customer.name}!`);
+      }
+    } catch (err) {
+      console.warn('Share dismissed or completed:', err);
+    }
+  };
+
   const handleSaveSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
       setValidationError('Customer Name is required!');
+      return;
+    }
+    const cleanedPhone = cleanIndianPhone(phone);
+    if (phone.trim() && cleanedPhone.length !== 10) {
+      setValidationError('Customer mobile number must be exactly 10 digits!');
+      return;
+    }
+    if (email.trim() && !isValidEmail(email)) {
+      setValidationError('Please enter a valid email address!');
       return;
     }
     setValidationError('');
@@ -63,7 +113,7 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
     onSave({
       ...(customer ? { id: customer.id } : {}),
       name: name.trim(),
-      phone: phone.trim(),
+      phone: cleanedPhone,
       email: email.trim(),
       address: address.trim(),
     });
@@ -320,16 +370,25 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
 
                 {totalOutstanding > 0 && customer?.phone && (
                   <div className="bg-white border border-amber-200/80 p-3 rounded-xl space-y-2 animate-fade-in text-slate-800">
-                    <span className="text-[9px] font-black uppercase text-amber-700 tracking-wider block">📲 Send Due Reminders</span>
+                    <div className="flex justify-between items-center">
+                      <span className="text-[9px] font-black uppercase text-amber-700 tracking-wider block">📲 Send Due Reminders</span>
+                      {customer.lastReminderSent && (
+                        <span className="text-[9px] font-bold text-emerald-600">
+                          Last sent: {new Date(customer.lastReminderSent).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      )}
+                    </div>
                     <div className="grid grid-cols-2 gap-2">
-                      <a
-                        href={`https://wa.me/91${customer.phone}?text=Dear%20${encodeURIComponent(customer.name)},%20this%2520is%2520a%2520friendly%2520reminder%2520that%2520your%2520outstanding%2520running%2520balance%2520(Khata/Credit)%2520at%2520our%2520store%2520is%2520Rs.%2520${formatCurrency(totalOutstanding)}.%2520Please%2520settle%2520your%2520due%2520at%252520the%252520earliest.%2520Thank%2520you!`}
-                        target="_blank"
-                        referrerPolicy="no-referrer"
-                        className="py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] font-extrabold uppercase text-center flex items-center justify-center gap-1 cursor-pointer transition-colors shadow-xs"
+                      <button
+                        type="button"
+                        onClick={handleSendPaymentReminder}
+                        className={`py-2 text-white rounded-xl text-[10px] font-extrabold uppercase text-center flex items-center justify-center gap-1 cursor-pointer transition-colors shadow-xs ${
+                          isReminderSent ? 'bg-emerald-700' : 'bg-emerald-600 hover:bg-emerald-700'
+                        }`}
                       >
-                        💬 WhatsApp
-                      </a>
+                        {isReminderSent ? <Check className="w-3.5 h-3.5" /> : <MessageCircle className="w-3.5 h-3.5" />}
+                        <span>{isReminderSent ? 'Sent!' : '💬 WhatsApp'}</span>
+                      </button>
                       <a
                         href={`sms:+91${customer.phone}?body=Dear%20${encodeURIComponent(customer.name)},%20your%20outstanding%20running%20balance%20(Khata/Credit)%20at%20our%20store%20is%20Rs.%20${formatCurrency(totalOutstanding)}.%20Please%20settle%20your%20due.%20Thank%20you!`}
                         className="py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-extrabold uppercase text-center flex items-center justify-center gap-1 cursor-pointer transition-colors shadow-xs"

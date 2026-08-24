@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Plus, Trash, Users, Save, ShieldCheck, CheckCircle2, Key, Users2, Delete, LogOut, Fingerprint, Check, AlertCircle } from 'lucide-react';
 import { Staff, Sale, StaffActivityLog } from '../types';
-import { formatDate } from '../utils';
+import { formatDate, cleanIndianPhone } from '../utils';
 import { useDialog } from '../context/DialogContext';
 import { checkBiometricsAvailability, authenticateWithNativeBiometrics } from '../services/biometricService';
 
@@ -212,12 +212,17 @@ export const StaffRosterViewModal: React.FC<StaffRosterViewModalProps> = ({
       showAlert('Please enter a valid 4-digit numeric PIN code!', 'Invalid PIN');
       return;
     }
+    const cleanedPhone = cleanIndianPhone(phone);
+    if (phone.trim() && cleanedPhone.length !== 10) {
+      showAlert('Staff mobile number must be exactly 10 digits!', 'Invalid Phone');
+      return;
+    }
 
     onSaveStaff({
       id: formId || undefined,
       name: name.trim(),
       role,
-      phone: phone.trim(),
+      phone: cleanedPhone,
       pin: pin.trim() || undefined,
       fpId: staffFpId || undefined,
       biometricEnabled: staffBioEnabled,

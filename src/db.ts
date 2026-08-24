@@ -173,8 +173,8 @@ export async function getDBFromIndexedDB(db: IDBDatabase): Promise<AppDatabase |
       estimates,
       deliveryChallans,
       creditDebitNotes,
-      branches: branches.length > 0 ? branches : [{ id: 'branch-1', name: 'Main Branch' }],
-      activeBranchId: activeBranchId || (branches[0]?.id || 'branch-1'),
+      branches: branches || [],
+      activeBranchId: activeBranchId || (branches[0]?.id || ''),
       staffActivityLogs,
       settings: settings || {
         shopName: '',
@@ -336,11 +336,22 @@ export async function createDefaultDatabase(): Promise<AppDatabase> {
       fssai: '',
       upi: '',
       footer: 'Thank you! Come again',
+      currency: '₹',
+      language: 'English',
+      financialYear: '2026-27',
+      gstEnabled: true,
+      defaultGstPct: 18,
       lowStockDefault: 10,
       nearExpiryDefault: 30,
       requireStaffPin: false,
       autoLogoutOnDayChange: true,
       dayChangeWarningMinutes: 5,
+      preferredReceiptPaperSize: '58mm',
+      showGstinOnBill: true,
+      showFssaiOnBill: true,
+      showUpiQrOnBill: true,
+      showTermsOnBill: true,
+      termsTextOnBill: '1. Goods once sold will not be taken back without original bill.\n2. Subject to local jurisdiction.',
     },
     auth: {
       userId: 'admin',
@@ -360,9 +371,7 @@ export async function createDefaultDatabase(): Promise<AppDatabase> {
     estimates: [],
     deliveryChallans: [],
     creditDebitNotes: [],
-    branches: [
-      { id: 'branch-1', name: 'Main Branch' }
-    ],
-    activeBranchId: 'branch-1',
+    branches: [],
+    activeBranchId: '',
   };
 }

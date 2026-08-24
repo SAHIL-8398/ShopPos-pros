@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { AppLogo } from './AppLogo';
 import { checkBiometricsAvailability, authenticateWithNativeBiometrics } from '../services/biometricService';
+import { isValidGstin, isValidFssai, cleanIndianPhone, isValidIndianPhone, isValidUpiId } from '../utils';
 
 export interface FirstLoginSetupData {
   auth: {
@@ -69,7 +70,7 @@ export const FirstLoginSetupForm: React.FC<FirstLoginSetupFormProps> = ({ onSave
   const [shopName, setShopName] = useState<string>('');
   const [phone, setPhone] = useState<string>('');
   const [address, setAddress] = useState<string>('');
-  const [currency, setCurrency] = useState<string>('Rs.');
+  const [currency, setCurrency] = useState<string>('₹');
 
   // Step 2: Tax, Registration & Payments
   const [gstin, setGstin] = useState<string>('');
@@ -195,6 +196,37 @@ export const FirstLoginSetupForm: React.FC<FirstLoginSetupFormProps> = ({ onSave
         setErrorMsg('Please enter your Shop / Business Name to continue.');
         return false;
       }
+      if (phone.trim()) {
+        const cleaned = cleanIndianPhone(phone);
+        if (cleaned.length !== 10) {
+          setErrorMsg('Store contact number must be a valid 10-digit mobile number.');
+          return false;
+        }
+      }
+    } else if (stepNumber === 2) {
+      if (gstin.trim() && !isValidGstin(gstin)) {
+        setErrorMsg('Invalid GSTIN format. Must be 15 characters (e.g. 27AAAAA0000A1Z5).');
+        return false;
+      }
+      if (fssai.trim() && !isValidFssai(fssai)) {
+        setErrorMsg('FSSAI License number must be exactly 14 digits.');
+        return false;
+      }
+      if (upi.trim() && !isValidUpiId(upi)) {
+        setErrorMsg('Invalid UPI ID format (e.g. merchant@upi or yourname@okaxis).');
+        return false;
+      }
+    } else if (stepNumber === 3) {
+      const gstNum = Number(defaultGstPct);
+      if (isNaN(gstNum) || gstNum < 0 || gstNum > 100) {
+        setErrorMsg('Default GST percentage must be between 0% and 100%.');
+        return false;
+      }
+      const lowStockNum = Number(lowStockDefault);
+      if (isNaN(lowStockNum) || lowStockNum < 0) {
+        setErrorMsg('Low stock threshold must be a non-negative number.');
+        return false;
+      }
     } else if (stepNumber === 4) {
       if (!pw1 || pw1.length < 6) {
         setErrorMsg('Security Passcode is required (minimum 6 characters).');
@@ -226,20 +258,8 @@ export const FirstLoginSetupForm: React.FC<FirstLoginSetupFormProps> = ({ onSave
   const handleFinalSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     
-    // Validate Step 1 and Step 4
-    if (!shopName.trim()) {
-      setCurrentStep(1);
-      setErrorMsg('Please enter your Shop / Business Name.');
-      return;
-    }
-    if (!pw1 || pw1.length < 6) {
-      setCurrentStep(4);
-      setErrorMsg('Security Passcode is required (minimum 6 characters).');
-      return;
-    }
-    if (pw1 !== pw2) {
-      setCurrentStep(4);
-      setErrorMsg('Passcodes do not match.');
+    // Validate all steps
+    if (!validateStep(1) || !validateStep(2) || !validateStep(3) || !validateStep(4)) {
       return;
     }
 
@@ -252,7 +272,7 @@ export const FirstLoginSetupForm: React.FC<FirstLoginSetupFormProps> = ({ onSave
       },
       settings: {
         shopName: shopName.trim(),
-        phone: phone.trim(),
+        phone: cleanIndianPhone(phone),
         address: address.trim(),
         gstin: gstin.trim().toUpperCase(),
         fssai: fssai.trim(),
@@ -370,8 +390,9 @@ export const FirstLoginSetupForm: React.FC<FirstLoginSetupFormProps> = ({ onSave
                   <input
                     type="tel"
                     value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="e.g. +91 98765 43210"
+                    maxLength={10}
+                    onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                    placeholder="e.g. 9876543210 (10 digits)"
                     className="w-full bg-slate-950/70 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white font-medium placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
                   />
                 </div>
@@ -385,12 +406,9 @@ export const FirstLoginSetupForm: React.FC<FirstLoginSetupFormProps> = ({ onSave
                     onChange={(e) => setCurrency(e.target.value)}
                     className="w-full bg-slate-950/70 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white font-medium focus:outline-none focus:border-indigo-500 transition-colors"
                   >
-                    <option value="Rs.">Rs. (Indian Rupee Text)</option>
                     <option value="₹">₹ (INR Rupee Symbol)</option>
-                    <option value="$">$ (US Dollar)</option>
-                    <option value="AED">AED (UAE Dirham)</option>
-                    <option value="£">£ (British Pound)</option>
-                    <option value="€">€ (Euro)</option>
+                    <option value="Rs.">Rs. (Indian Rupee Text)</option>
+                    <option value="INR">INR (Currency Code)</option>
                   </select>
                 </div>
               </div>

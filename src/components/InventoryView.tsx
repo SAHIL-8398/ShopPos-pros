@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { Package, Search, Plus, Calendar, AlertTriangle, BadgePercent, Scan, Download, Upload, ArrowUpDown, TrendingUp } from 'lucide-react';
+import { Package, Search, Plus, Calendar, AlertTriangle, BadgePercent, Scan, Download, Upload, ArrowUpDown, TrendingUp, Printer, Tag, CheckSquare, Square, Zap, ShoppingBag } from 'lucide-react';
 import { Product, Supplier, Sale } from '../types';
 import { formatCurrency, formatDate } from '../utils';
 import { useTranslation } from '../context/LocalizationContext';
@@ -24,6 +24,8 @@ interface InventoryViewProps {
   };
   onImportProducts?: (imported: Product[]) => void;
   onBulkUpdateProducts?: (modifiedProducts: Product[]) => void;
+  onOpenPrintLabels?: (productIds: string[]) => void;
+  onOpenSuppliersPO?: (initialTab?: 'suggestions' | 'po' | 'list') => void;
 }
 
 export const InventoryView: React.FC<InventoryViewProps> = ({
@@ -35,6 +37,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   settings,
   onImportProducts,
   onBulkUpdateProducts,
+  onOpenPrintLabels,
+  onOpenSuppliersPO,
 }) => {
   const { t } = useTranslation();
   const { showAlert } = useDialog();
@@ -230,7 +234,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       </div>
 
       {/* Standalone Low-stock threshold filter toggle */}
-      <div className="flex items-center justify-between bg-white border border-slate-200 rounded-xl p-3 shadow-xs hover:border-slate-300 transition-colors">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between bg-white border border-slate-200 rounded-xl p-3 shadow-xs hover:border-slate-300 transition-colors gap-2">
         <div className="flex items-center gap-2.5">
           <input
             type="checkbox"
@@ -244,9 +248,22 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             Show only low stock items
           </label>
         </div>
-        <span className="text-[10px] bg-amber-50 text-amber-700 font-extrabold px-2 py-0.5 rounded-full uppercase border border-amber-100">
-          Threshold Alert
-        </span>
+        <div className="flex items-center gap-2">
+          {onOpenSuppliersPO && (
+            <button
+              type="button"
+              onClick={() => onOpenSuppliersPO('suggestions')}
+              className="text-[11px] bg-gradient-to-r from-amber-600 to-indigo-600 hover:from-amber-700 hover:to-indigo-700 text-white font-black px-2.5 py-1 rounded-lg flex items-center gap-1 cursor-pointer shadow-xs transition-all active:scale-95"
+              title="Generate suggested purchase order for low-stock items"
+            >
+              <Zap className="w-3 h-3 fill-current" />
+              <span>⚡ Suggested Purchase Orders</span>
+            </button>
+          )}
+          <span className="text-[10px] bg-amber-50 text-amber-700 font-extrabold px-2 py-0.5 rounded-full uppercase border border-amber-100">
+            Threshold Alert
+          </span>
+        </div>
       </div>
 
       {/* Expiry / Low stock categorizations tabs & Bulk Export option */}
@@ -440,7 +457,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
       {/* Select All or Bulk Actions Toolbar */}
       {sortedAndFilteredProducts.length > 0 && (
-        <div className="flex justify-between items-center bg-slate-100/60 dark:bg-slate-950/60 border border-slate-200/50 dark:border-slate-850/50 p-2.5 rounded-xl text-xs font-bold leading-none mb-1 select-none">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 bg-slate-100/90 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 p-2.5 rounded-xl text-xs font-bold leading-none mb-1 select-none shadow-xs">
           <div className="flex items-center gap-2">
             <input
               type="checkbox"
@@ -455,19 +472,58 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   setSelectedIds(prev => prev.filter(id => !filteredIds.includes(id)));
                 }
               }}
-              className="w-4.5 h-4.5 rounded border-slate-300 text-indigo-605 focus:ring-indigo-500 cursor-pointer"
+              className="w-4.5 h-4.5 rounded border-slate-300 dark:border-slate-700 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
             />
-            <label htmlFor="bulk-select-all" className="text-slate-700 dark:text-slate-300 cursor-pointer font-black uppercase text-[10px] tracking-wider">
-              {sortedAndFilteredProducts.every(p => selectedIds.includes(p.id)) ? 'Deselect All' : 'Select All Filtered'} ({sortedAndFilteredProducts.length} items)
+            <label htmlFor="bulk-select-all" className="text-slate-700 dark:text-slate-200 cursor-pointer font-black uppercase text-[10px] tracking-wider flex items-center gap-1.5">
+              {sortedAndFilteredProducts.every(p => selectedIds.includes(p.id)) ? 'Deselect All' : 'Select All'}
+              <span className="text-slate-400 dark:text-slate-500 font-bold lowercase text-[10px]">({sortedAndFilteredProducts.length} items)</span>
             </label>
           </div>
+
           {selectedIds.length > 0 && (
-            <button
-              onClick={() => setSelectedIds([])}
-              className="text-[10px] font-black uppercase tracking-wider text-rose-550 hover:underline cursor-pointer"
-            >
-              Clear Selected ({selectedIds.length})
-            </button>
+            <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto justify-between sm:justify-end">
+              {onOpenPrintLabels && (
+                <button
+                  type="button"
+                  onClick={() => onOpenPrintLabels(selectedIds)}
+                  className="flex items-center gap-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer shadow-xs"
+                  title="Generate printable barcode sheet for selected products"
+                >
+                  <Printer className="w-3 h-3" />
+                  <span>Print Labels ({selectedIds.length})</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  setBulkCategory('');
+                  setBulkAction('category');
+                }}
+                className="px-2 py-1 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 active:scale-95 text-slate-700 dark:text-slate-200 rounded-lg text-[10px] font-black uppercase tracking-wider border border-slate-200 dark:border-slate-700 transition-all cursor-pointer"
+              >
+                Category
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setBulkDiscountValue(0);
+                  setBulkAction('discount');
+                }}
+                className="px-2 py-1 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 active:scale-95 text-slate-700 dark:text-slate-200 rounded-lg text-[10px] font-black uppercase tracking-wider border border-slate-200 dark:border-slate-700 transition-all cursor-pointer"
+              >
+                Discount
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSelectedIds([])}
+                className="text-[10px] font-black uppercase tracking-wider text-rose-500 hover:text-rose-600 px-1 py-1 cursor-pointer"
+              >
+                Clear
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -602,12 +658,18 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
             const supplier = p.supplierId ? suppliersMap.get(p.supplierId) : undefined;
 
+            const isCardSelected = selectedIds.includes(p.id);
+
             return (
               <button
                 key={p.id}
                 type="button"
                 onClick={() => onOpenProductModal(p.id)}
-                className={`w-full text-left bg-white dark:bg-slate-900 border dark:border-slate-800 rounded-xl p-3 shadow-xs flex flex-col justify-between transition-all cursor-pointer active:scale-[0.99] hover:bg-slate-50 dark:hover:bg-slate-850/50 ${
+                className={`w-full text-left rounded-xl p-3 shadow-xs flex flex-col justify-between transition-all cursor-pointer active:scale-[0.99] border ${
+                  isCardSelected
+                    ? 'bg-indigo-50/70 dark:bg-indigo-950/40 border-indigo-300 dark:border-indigo-700 ring-2 ring-indigo-500/30'
+                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-850/50'
+                } ${
                   isOutOfStock
                     ? 'border-l-rose-500 border-l-4'
                     : isLowStock
@@ -616,7 +678,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                         ? 'border-l-red-600 border-l-4'
                         : expiryState === 'soon'
                           ? 'border-l-rose-455 border-l-4'
-                          : 'border-l-slate-200 dark:border-l-slate-800'
+                          : isCardSelected
+                            ? 'border-l-indigo-600 border-l-4'
+                            : 'border-l-slate-200 dark:border-l-slate-800'
                 }`}
               >
                 <div className="flex items-start gap-3 w-full">
@@ -624,7 +688,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   <div className="pt-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
-                      checked={selectedIds.includes(p.id)}
+                      checked={isCardSelected}
                       onChange={(e) => {
                         if (e.target.checked) {
                           setSelectedIds(prev => [...prev, p.id]);
@@ -632,7 +696,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                           setSelectedIds(prev => prev.filter(id => id !== p.id));
                         }
                       }}
-                      className="w-4.5 h-4.5 rounded border-slate-300 dark:border-slate-700 text-indigo-605 focus:ring-indigo-500 cursor-pointer block"
+                      className="w-4.5 h-4.5 rounded border-slate-300 dark:border-slate-700 text-indigo-600 focus:ring-indigo-500 cursor-pointer block"
                     />
                   </div>
 
@@ -724,19 +788,30 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
       {/* BULK ACTIONS STICKY FLOATING PANEL */}
       {selectedIds.length > 0 && (
-        <div className="fixed bottom-[88px] left-1/2 -translate-x-1/2 w-[calc(100%-1.5rem)] max-w-xs bg-slate-900 border border-slate-800 text-white rounded-2xl p-3 shadow-2xl flex items-center justify-between z-45 animate-fade-in gap-3">
+        <div className="fixed bottom-[88px] left-1/2 -translate-x-1/2 w-[calc(100%-1.5rem)] max-w-md bg-slate-900/95 backdrop-blur-md border border-slate-800 text-white rounded-2xl p-3 shadow-2xl flex items-center justify-between z-45 animate-fade-in gap-2.5">
           <div className="flex flex-col min-w-0 select-none">
-            <span className="text-[9px] text-slate-400 font-black uppercase tracking-widest leading-none">Bulk Stock Manager</span>
-            <span className="text-xs font-black truncate mt-1">{selectedIds.length} items select</span>
+            <span className="text-[9px] text-slate-400 font-black uppercase tracking-widest leading-none">Bulk Actions</span>
+            <span className="text-xs font-black truncate mt-1 text-indigo-300">{selectedIds.length} items selected</span>
           </div>
-          <div className="flex gap-1 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0">
+            {onOpenPrintLabels && (
+              <button
+                type="button"
+                onClick={() => onOpenPrintLabels(selectedIds)}
+                className="flex items-center gap-1 px-3 py-2 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white text-[10px] font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-lg shadow-indigo-600/30"
+                title="Print labels for selected products"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Print Labels</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {
                 setBulkCategory('');
                 setBulkAction('category');
               }}
-              className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-[10px] font-black uppercase tracking-wider rounded-lg transition-transform active:scale-95 cursor-pointer"
+              className="px-2.5 py-2 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-[10px] font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer border border-slate-700"
             >
               Category
             </button>
@@ -746,9 +821,17 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 setBulkDiscountValue(0);
                 setBulkAction('discount');
               }}
-              className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-[10px] font-black uppercase tracking-wider rounded-lg transition-transform active:scale-95 cursor-pointer"
+              className="px-2.5 py-2 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-[10px] font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer border border-slate-700"
             >
               Discount
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedIds([])}
+              className="p-2 text-slate-400 hover:text-rose-400 rounded-xl transition-colors cursor-pointer"
+              title="Clear selection"
+            >
+              ✕
             </button>
           </div>
         </div>

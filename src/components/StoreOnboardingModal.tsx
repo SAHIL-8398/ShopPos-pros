@@ -20,6 +20,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { Settings } from '../types';
+import { isValidGstin, isValidFssai, cleanIndianPhone, isValidUpiId } from '../utils';
 
 interface StoreOnboardingModalProps {
   settings: Settings;
@@ -37,7 +38,7 @@ export const StoreOnboardingModal: React.FC<StoreOnboardingModalProps> = ({
   const [shopName, setShopName] = useState<string>(settings.shopName || '');
   const [phone, setPhone] = useState<string>(settings.phone || '');
   const [address, setAddress] = useState<string>(settings.address || '');
-  const [currency, setCurrency] = useState<string>(settings.currency || 'Rs.');
+  const [currency, setCurrency] = useState<string>(settings.currency || '₹');
   const [gstin, setGstin] = useState<string>(settings.gstin || '');
   const [fssai, setFssai] = useState<string>(settings.fssai || '');
   const [gstEnabled, setGstEnabled] = useState<boolean>(settings.gstEnabled !== false);
@@ -73,10 +74,27 @@ export const StoreOnboardingModal: React.FC<StoreOnboardingModalProps> = ({
       setErrorMsg('Shop Name is required');
       return;
     }
+    const cleanedPhone = cleanIndianPhone(phone);
+    if (phone.trim() && cleanedPhone.length !== 10) {
+      setErrorMsg('Phone number must be a valid 10-digit mobile number');
+      return;
+    }
+    if (gstin.trim() && !isValidGstin(gstin)) {
+      setErrorMsg('Please enter a valid 15-character GSTIN (e.g. 27AAAAA0000A1Z5)');
+      return;
+    }
+    if (fssai.trim() && !isValidFssai(fssai)) {
+      setErrorMsg('FSSAI License number must be exactly 14 digits');
+      return;
+    }
+    if (upi.trim() && !isValidUpiId(upi)) {
+      setErrorMsg('Please enter a valid UPI VPA ID (e.g. storename@upi)');
+      return;
+    }
 
     onSave({
       shopName: shopName.trim(),
-      phone: phone.trim(),
+      phone: cleanedPhone,
       address: address.trim(),
       currency: currency.trim() || 'Rs.',
       gstin: gstin.trim().toUpperCase(),
@@ -169,10 +187,11 @@ export const StoreOnboardingModal: React.FC<StoreOnboardingModalProps> = ({
                 </label>
                 <input
                   type="tel"
+                  maxLength={10}
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="e.g. +91 98765 43210"
-                  className="w-full bg-slate-950/70 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500"
+                  onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                  placeholder="e.g. 9876543210 (10 digits)"
+                  className="w-full bg-slate-950/70 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 font-mono"
                 />
               </div>
 
@@ -185,12 +204,9 @@ export const StoreOnboardingModal: React.FC<StoreOnboardingModalProps> = ({
                   onChange={(e) => setCurrency(e.target.value)}
                   className="w-full bg-slate-950/70 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500"
                 >
-                  <option value="Rs.">Rs. (Rupees Text)</option>
                   <option value="₹">₹ (Rupee Symbol)</option>
-                  <option value="$">$ (USD)</option>
-                  <option value="AED">AED (Dirham)</option>
-                  <option value="£">£ (Pound)</option>
-                  <option value="€">€ (Euro)</option>
+                  <option value="Rs.">Rs. (Rupees Text)</option>
+                  <option value="INR">INR (Currency Code)</option>
                 </select>
               </div>
             </div>

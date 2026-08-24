@@ -4,9 +4,9 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { X, CheckCircle, Percent, QrCode, CreditCard, Landmark, DollarSign, Search, UserMinus, Award, RefreshCw, Copy, Check, Maximize2, Smartphone, AlertCircle, Edit3, ShieldCheck, CheckCircle2, ChevronRight } from 'lucide-react';
+import { X, CheckCircle, Percent, QrCode, CreditCard, Landmark, IndianRupee, Search, UserMinus, Award, RefreshCw, Copy, Check, Maximize2, Smartphone, AlertCircle, Edit3, ShieldCheck, CheckCircle2, ChevronRight } from 'lucide-react';
 import { Customer, Staff, SaleItem, Settings, Sale } from '../types';
-import { formatCurrency, generateId, generateUpiQrDataUrl, buildUpiPayload, copyToClipboard } from '../utils';
+import { formatCurrency, generateId, generateUpiQrDataUrl, buildUpiPayload, copyToClipboard, cleanIndianPhone, isValidEmail, isValidUpiId } from '../utils';
 import { useDialog } from '../context/DialogContext';
 
 interface CheckoutModalProps {
@@ -148,9 +148,10 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   // Loyalty points redemption parameters
   const [redeedPointsChecked, setRedeedPointsChecked] = useState<boolean>(false);
+  const [customPointsInput, setCustomPointsInput] = useState<string>('');
   const selectedCustomer = customers.find(c => c.id === selectedCustomerId);
 
-  // Compute this linked customer's available balance across non-voided past bills (1 Point = Rs. 1)
+  // Compute this linked customer's available balance across non-voided past bills or stored profile
   const activeCustomerSales = selectedCustomerId
     ? sales.filter(s => !s.voided && (s.creditCustId === selectedCustomerId || s.customer === selectedCustomer?.name))
     : [];
@@ -158,12 +159,19 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   let loyaltyPointsEarned = 0;
   let loyaltyPointsRedeemed = 0;
   activeCustomerSales.forEach(s => {
-    loyaltyPointsEarned += Math.floor(s.total / 50);
+    loyaltyPointsEarned += Math.floor(s.total / (settings.loyaltyPointsPerSpend || 50));
     loyaltyPointsRedeemed += s.pointsRedeemed || 0;
   });
-  const maxLoyaltyPoints = Math.max(0, loyaltyPointsEarned - loyaltyPointsRedeemed);
+  const calculatedBalance = Math.max(0, loyaltyPointsEarned - loyaltyPointsRedeemed);
+  const maxLoyaltyPoints = selectedCustomer?.loyaltyPoints !== undefined ? selectedCustomer.loyaltyPoints : calculatedBalance;
 
-  const numPointsDeduction = redeedPointsChecked ? Math.min(maxLoyaltyPoints, Math.floor(rawCheckoutTotal)) : 0;
+  const pointRate = settings.loyaltyPointValue && settings.loyaltyPointValue > 0 ? settings.loyaltyPointValue : 1;
+  const maxPointsPossible = Math.min(maxLoyaltyPoints, Math.floor(rawCheckoutTotal / pointRate));
+  const pointsToRedeem = redeedPointsChecked 
+    ? (customPointsInput !== '' ? Math.min(maxPointsPossible, Math.max(0, Number(customPointsInput) || 0)) : maxPointsPossible)
+    : 0;
+
+  const numPointsDeduction = pointsToRedeem * pointRate;
   const checkoutTotal = Math.max(0, rawCheckoutTotal - numPointsDeduction);
 
   // Split calculations
@@ -252,8 +260,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   const handleSaveInlineUpi = async () => {
     const clean = inlineUpiInput.trim();
-    if (!clean || !clean.includes('@')) {
-      await showAlert('Please enter a valid UPI VPA ID containing an "@" (e.g. name@okhdfcbank or 9876543210@paytm)', 'Invalid UPI ID');
+    if (!clean || !isValidUpiId(clean)) {
+      await showAlert('Please enter a valid UPI VPA ID (e.g. storename@okhdfcbank or 9876543210@paytm)', 'Invalid UPI ID');
       return;
     }
     if (onUpdateSettings) {
@@ -295,6 +303,18 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const handleCompleteSale = async () => {
     if (isProcessing) return;
 
+    const cleanedNewPhone = cleanIndianPhone(newCustPhone);
+    if (customerType === 'new' && (newCustName.trim() || newCustPhone.trim())) {
+      if (newCustPhone.trim() && cleanedNewPhone.length !== 10) {
+        await showAlert('Customer phone number must be a valid 10-digit mobile number!', 'Invalid Phone Number');
+        return;
+      }
+      if (newCustEmail.trim() && !isValidEmail(newCustEmail)) {
+        await showAlert('Please enter a valid customer email address!', 'Invalid Email');
+        return;
+      }
+    }
+
     if (paymentMethod === 'credit') {
       if (customerType === 'existing') {
         if (!selectedCustomerId) {
@@ -307,8 +327,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           await showAlert('Please specify the new customer\'s Name!', 'Information Required');
           return;
         }
-        if (!newCustPhone.trim()) {
-          await showAlert('Please specify the new customer\'s Phone Number!', 'Information Required');
+        if (!newCustPhone.trim() || cleanedNewPhone.length !== 10) {
+          await showAlert('Please specify a valid 10-digit Phone Number for the new credit customer!', 'Information Required');
           return;
         }
       }
@@ -349,12 +369,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         creditCustId: customerType === 'existing' ? selectedCustomerId : null,
         staffId,
         staffName: assignedStaff ? assignedStaff.name : '',
-        pointsRedeemed: numPointsDeduction,
+        pointsRedeemed: pointsToRedeem,
         interStateGst,
         upiTxnId: customUtr.trim() || (upiSimStatus === 'success' ? simTxnId : undefined),
-        newCustomer: customerType === 'new' ? {
-          name: newCustName.trim(),
-          phone: newCustPhone.trim(),
+        newCustomer: customerType === 'new' && (newCustName.trim() || cleanedNewPhone) ? {
+          name: newCustName.trim() || 'Valued Customer',
+          phone: cleanedNewPhone,
           email: newCustEmail.trim(),
           address: newCustAddress.trim(),
         } : undefined
@@ -395,7 +415,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               {cart.map(i => (
                 <div key={i.id} className="flex justify-between text-xs py-1 border-b border-dashed border-slate-200 dark:border-slate-800 last:border-none">
                   <span className="text-slate-700 dark:text-slate-300 font-medium truncate max-w-[220px]">
-                    {i.name} <span className="text-slate-400 dark:text-slate-500">×{i.qty}</span>
+                    {i.name} <span className="text-slate-400 dark:text-slate-500">×{i.qty} {i.unit || 'pcs'}</span>
                   </span>
                   <span className="font-bold text-slate-900 dark:text-slate-100">
                     Rs.{formatCurrency(i.price * i.qty)}
@@ -1094,40 +1114,79 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   </div>
 
                   {selectedCustomer ? (
-                    <div className="bg-white dark:bg-slate-900 border border-slate-250 dark:border-slate-750 p-2.5 rounded-xl flex justify-between items-center gap-2 animate-in fade-in duration-100">
-                      <div className="min-w-0 flex-1">
-                        <div className="text-xs font-black text-indigo-700 dark:text-indigo-400 truncate">{selectedCustomer.name}</div>
-                        <div className="text-[10px] text-slate-400 mt-0.5">{selectedCustomer.phone || 'No phone'}</div>
-                      </div>
-                      <div className="flex items-center gap-1.5 flex-shrink-0">
-                        {maxLoyaltyPoints > 0 ? (
+                    <div className="bg-white dark:bg-slate-900 border border-slate-250 dark:border-slate-750 p-2.5 rounded-xl space-y-2 animate-in fade-in duration-100">
+                      <div className="flex justify-between items-center gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-black text-indigo-700 dark:text-indigo-400 truncate">{selectedCustomer.name}</div>
+                          <div className="text-[10px] text-slate-400 mt-0.5">{selectedCustomer.phone || 'No phone'}</div>
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          {maxLoyaltyPoints > 0 ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRedeedPointsChecked(!redeedPointsChecked);
+                                if (!redeedPointsChecked) {
+                                  setCustomPointsInput(String(maxPointsPossible));
+                                }
+                              }}
+                              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all border cursor-pointer ${
+                                redeedPointsChecked
+                                  ? 'bg-amber-500 text-white border-amber-500 active:scale-95'
+                                  : 'bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 text-amber-700 border-amber-250/50'
+                              }`}
+                              title="Redeem available store rewards discount"
+                            >
+                              <Award className="w-3 h-3 fill-current" />
+                              {redeedPointsChecked ? `Points Applied` : `Redeem (${maxLoyaltyPoints} Pts)`}
+                            </button>
+                          ) : (
+                            <span className="text-[8px] font-extrabold text-amber-600 bg-amber-50 px-1.5 py-1 rounded">0 Pts</span>
+                          )}
                           <button
                             type="button"
-                            onClick={() => setRedeedPointsChecked(!redeedPointsChecked)}
-                            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all border ${
-                              redeedPointsChecked
-                                ? 'bg-amber-500 text-white border-amber-500 active:scale-95'
-                                : 'bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 text-amber-700 border-amber-250/50'
-                            }`}
-                            title="Redeem available store rewards discount"
+                            onClick={() => {
+                              setSelectedCustomerId(null);
+                              setRedeedPointsChecked(false);
+                              setCustomPointsInput('');
+                            }}
+                            className="text-xs text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950 p-1 rounded-lg cursor-pointer"
+                            title="Clear Customer Selection"
                           >
-                            <Award className="w-3 h-3 fill-current" />
-                            {redeedPointsChecked ? `Apply ${numPointsDeduction} Pts` : `Redeem (${maxLoyaltyPoints})`}
+                            <UserMinus className="w-4 h-4" />
                           </button>
-                        ) : (
-                          <span className="text-[8px] font-extrabold text-amber-600 bg-amber-50 px-1.5 py-1 rounded">0 Pts</span>
-                        )}
-                        <button
-                          onClick={() => {
-                            setSelectedCustomerId(null);
-                            setRedeedPointsChecked(false);
-                          }}
-                          className="text-xs text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950 p-1 rounded-lg"
-                          title="Clear Customer Selection"
-                        >
-                          <UserMinus className="w-4 h-4" />
-                        </button>
+                        </div>
                       </div>
+
+                      {/* Expanded loyalty redemption detail if active and points available */}
+                      {maxLoyaltyPoints > 0 && redeedPointsChecked && (
+                        <div className="bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200/70 dark:border-amber-900/50 rounded-lg p-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px]">
+                          <div className="text-amber-800 dark:text-amber-300 font-bold">
+                            Available: <span className="font-extrabold">{maxLoyaltyPoints} pts</span> (1 pt = ₹{pointRate})
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">Use pts:</span>
+                            <input
+                              type="number"
+                              min="1"
+                              max={maxPointsPossible}
+                              value={customPointsInput}
+                              onChange={(e) => setCustomPointsInput(e.target.value)}
+                              className="w-16 bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-800 rounded px-1.5 py-0.5 text-center font-bold text-xs outline-none"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setCustomPointsInput(String(maxPointsPossible))}
+                              className="text-[9px] bg-amber-200 dark:bg-amber-900 text-amber-900 dark:text-amber-200 font-extrabold px-1.5 py-0.5 rounded cursor-pointer hover:opacity-90"
+                            >
+                              MAX
+                            </button>
+                            <span className="font-extrabold text-amber-700 dark:text-amber-400 text-xs">
+                              -₹{formatCurrency(numPointsDeduction)}
+                            </span>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ) : paymentMethod === 'credit' ? (
                     <p className="text-[9px] text-slate-500 text-center font-bold">

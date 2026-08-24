@@ -18,6 +18,7 @@ interface LabelGeneratorProps {
   fssai?: string;
   onClose: () => void;
   initialProductId?: string | null;
+  initialProductIds?: string[] | null;
   onQuickUpdateBarcode?: (productId: string, barcode: string) => void;
 }
 
@@ -116,6 +117,7 @@ export const LabelGenerator: React.FC<LabelGeneratorProps> = ({
   fssai,
   onClose,
   initialProductId = null,
+  initialProductIds = null,
   onQuickUpdateBarcode,
 }) => {
   const { showAlert } = useDialog();
@@ -136,7 +138,7 @@ export const LabelGenerator: React.FC<LabelGeneratorProps> = ({
   const [a4StartOffset, setA4StartOffset] = React.useState<number>(0);
 
   // Bulk state variables
-  const [bulkMode, setBulkMode] = React.useState<boolean>(false);
+  const [bulkMode, setBulkMode] = React.useState<boolean>(Boolean(initialProductIds && initialProductIds.length > 0));
   const [queue, setQueue] = React.useState<{ product: Product; qty: number }[]>([]);
   const [bulkSelectId, setBulkSelectId] = React.useState<string>('');
   const [bulkSelectQty, setBulkSelectQty] = React.useState<number>(10);
@@ -144,30 +146,52 @@ export const LabelGenerator: React.FC<LabelGeneratorProps> = ({
   // References to rendered barcode SVGs inside the preview sheet
   const svgContainerRef = useRef<HTMLDivElement>(null);
 
-  // Print-specific filtering & sorting states
-  const [showAllProducts, setShowAllProducts] = React.useState<boolean>(Boolean(initialProductId));
+  // Print-specific filtering & sorting states: default to 'generated' (only show products with system generated barcode)
+  const [productFilterMode, setProductFilterMode] = React.useState<'generated' | 'all'>('generated');
   const [printSearchQuery, setPrintSearchQuery] = React.useState<string>('');
   const [printSortOrder, setPrintSortOrder] = React.useState<'none' | 'a-z' | 'z-a'>('none');
 
   React.useEffect(() => {
-    if (initialProductId) {
+    if (initialProductIds && initialProductIds.length > 0) {
+      const selectedProds = products.filter(p => initialProductIds.includes(p.id));
+      if (selectedProds.length > 0) {
+        const items = selectedProds.map(p => ({
+          product: p,
+          qty: p.qty > 0 ? Math.min(Math.max(p.qty, 1), 24) : 10
+        }));
+        setQueue(items);
+        setBulkMode(true);
+        // If explicitly opened with initial products, allow showing them
+        setProductFilterMode('all');
+        if (selectedProds[0]) {
+          setSelectedProductId(selectedProds[0].id);
+        }
+      }
+    } else if (initialProductId) {
       setSelectedProductId(initialProductId);
       setBulkMode(false);
-      setShowAllProducts(true);
+      setProductFilterMode('all');
     }
-  }, [initialProductId]);
+  }, [initialProductId, initialProductIds, products]);
 
-  const isScannedBarcode = (barcode: string) => {
-    if (!barcode) return false;
-    return !(barcode.startsWith('45') && barcode.length === 7 && /^\d+$/.test(barcode));
+  const isSystemGeneratedProduct = (productOrBarcode: Product | string | undefined): boolean => {
+    if (!productOrBarcode) return false;
+    if (typeof productOrBarcode === 'object') {
+      if (productOrBarcode.isGeneratedBarcode === true || productOrBarcode.barcodeType === 'generated') return true;
+      if (productOrBarcode.barcodeType === 'scanned') return false;
+      const bc = productOrBarcode.barcode?.trim() || '';
+      return /^45(\d{8}|\d{5})$/.test(bc);
+    }
+    const barcode = productOrBarcode.trim();
+    return /^45(\d{8}|\d{5})$/.test(barcode);
   };
 
   const filteredPrintProducts = React.useMemo(() => {
     let list = [...products];
 
-    // 1. By default, don't show products whose barcode is scanned
-    if (!showAllProducts) {
-      list = list.filter(p => !isScannedBarcode(p.barcode));
+    // 1. By default or when 'generated' is active, ONLY show products with system-generated barcodes
+    if (productFilterMode === 'generated') {
+      list = list.filter(p => isSystemGeneratedProduct(p));
     }
 
     // 2. Search option for search product
@@ -195,7 +219,7 @@ export const LabelGenerator: React.FC<LabelGeneratorProps> = ({
     }
 
     return list;
-  }, [products, showAllProducts, printSearchQuery, printSortOrder, selectedProductId]);
+  }, [products, productFilterMode, printSearchQuery, printSortOrder, selectedProductId]);
 
   const selectedProduct = products.find(p => p.id === selectedProductId);
 
@@ -621,17 +645,31 @@ export const LabelGenerator: React.FC<LabelGeneratorProps> = ({
             <option value="z-a">Alphabetical (Z to A)</option>
           </select>
         </div>
-        <label className="flex items-center gap-2 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={showAllProducts}
-            onChange={(e) => setShowAllProducts(e.target.checked)}
-            className="rounded border-slate-300 dark:border-slate-700 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 cursor-pointer"
-          />
-          <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
-            Show all products (including scanned/vendor barcodes)
-          </span>
-        </label>
+        {/* Segmented Filter Toggle Button */}
+        <div className="flex items-center gap-1.5 p-1 bg-white dark:bg-slate-950 rounded-xl border border-slate-200/80 dark:border-slate-800">
+          <button
+            type="button"
+            onClick={() => setProductFilterMode('generated')}
+            className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-extrabold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+              productFilterMode === 'generated'
+                ? 'bg-indigo-50 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/80 shadow-2xs'
+                : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+            }`}
+          >
+            <span>⚡ System Generated Only</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setProductFilterMode('all')}
+            className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-extrabold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+              productFilterMode === 'all'
+                ? 'bg-indigo-50 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/80 shadow-2xs'
+                : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+            }`}
+          >
+            <span>📦 Show All Products</span>
+          </button>
+        </div>
       </div>
 
       <div className="space-y-3 mb-4">

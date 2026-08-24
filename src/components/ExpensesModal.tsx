@@ -4,9 +4,9 @@
  */
 
 import React, { useState } from 'react';
-import { X, Plus, Trash, CreditCard, DollarSign } from 'lucide-react';
+import { X, Plus, Trash, CreditCard, IndianRupee } from 'lucide-react';
 import { Expense } from '../types';
-import { formatCurrency, getTodayDateString } from '../utils';
+import { formatCurrency, getTodayDateString, isSameDate } from '../utils';
 import { useDialog } from '../context/DialogContext';
 
 interface ExpensesModalProps {
@@ -30,7 +30,7 @@ export const ExpensesModal: React.FC<ExpensesModalProps> = ({
   const todayStr = getTodayDateString();
 
   // Filter today's expenditures to display inside the modal list
-  const todayExpenses = expenses.filter(e => e.date === todayStr);
+  const todayExpenses = expenses.filter(e => isSameDate(e.date, todayStr));
   const totalTodayExpenses = todayExpenses.reduce((sum, e) => sum + e.amount, 0);
 
   const handleSubmit = (e: React.FormEvent) => {

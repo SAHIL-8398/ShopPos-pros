@@ -44,12 +44,14 @@ import {
   SlidersHorizontal,
   ArrowUp,
   ArrowDown,
+  ArrowLeft,
+  ArrowRight,
   RotateCcw,
   LayoutGrid
 } from 'lucide-react';
 import { AppDatabase, Settings as SettingsType, DashboardWidgetConfig, DashboardWidgetId } from '../types';
 import { hashPassword } from '../db';
-import { formatCurrency } from '../utils';
+import { formatCurrency, isValidGstin, isValidFssai, cleanIndianPhone, isValidUpiId } from '../utils';
 import { useTranslation } from '../context/LocalizationContext';
 import { useDialog } from '../context/DialogContext';
 import { checkBiometricsAvailability, BiometricCheckResult } from '../services/biometricService';
@@ -118,7 +120,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   // Custom added Enterprise variables
   const [logo, setLogo] = useState<string>(currentSettings.logo || '');
-  const [currency, setCurrency] = useState<string>(currentSettings.currency || 'Rs.');
+  const [currency, setCurrency] = useState<string>(currentSettings.currency || '₹');
   const [language, setLanguage] = useState<string>(currentSettings.language || 'English');
   const [financialYear, setFinancialYear] = useState<string>(currentSettings.financialYear || '2026-27');
   const [gstEnabled, setGstEnabled] = useState<boolean>(currentSettings.gstEnabled !== false);
@@ -157,6 +159,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   // Wipe & Reset confirmation modal state
   const [isWipeModalOpen, setIsWipeModalOpen] = useState<boolean>(false);
+  const [wipeStep, setWipeStep] = useState<1 | 2>(1);
   const [adminPasscodeInput, setAdminPasscodeInput] = useState<string>('');
   const [wipeError, setWipeError] = useState<string | null>(null);
   const [isWiping, setIsWiping] = useState<boolean>(false);
@@ -249,7 +252,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setUpi(currentSettings.upi || '');
     setFooter(currentSettings.footer || 'Thank you! Come again');
     setLogo(currentSettings.logo || '');
-    setCurrency(currentSettings.currency || 'Rs.');
+    setCurrency(currentSettings.currency || '₹');
     setLanguage(currentSettings.language || 'English');
     setFinancialYear(currentSettings.financialYear || '2026-27');
     setGstEnabled(currentSettings.gstEnabled !== false);
@@ -298,11 +301,33 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const handleSaveShopInfoSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!shopName.trim()) {
+      showAlert('Store Name is required!', 'Required Field');
+      return;
+    }
+    const cleanedPhone = cleanIndianPhone(phone);
+    if (phone.trim() && cleanedPhone.length !== 10) {
+      showAlert('Store contact number must be a valid 10-digit mobile number!', 'Invalid Phone Number');
+      return;
+    }
+    if (gstin.trim() && !isValidGstin(gstin)) {
+      showAlert('Invalid GSTIN format! Must be 15 characters (e.g. 27AAAAA0000A1Z5).', 'Invalid GSTIN');
+      return;
+    }
+    if (fssai.trim() && !isValidFssai(fssai)) {
+      showAlert('FSSAI License number must be exactly 14 digits.', 'Invalid FSSAI');
+      return;
+    }
+    if (upi.trim() && !isValidUpiId(upi)) {
+      showAlert('Invalid UPI ID format (e.g. storename@upi or merchant@okaxis).', 'Invalid UPI ID');
+      return;
+    }
+
     onSaveShopInfo({
       shopName: shopName.trim(),
       address: address.trim(),
-      phone: phone.trim(),
-      gstin: gstin.trim(),
+      phone: cleanedPhone,
+      gstin: gstin.trim().toUpperCase(),
       fssai: fssai.trim(),
       upi: upi.trim(),
       footer: footer.trim(),
@@ -352,7 +377,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setUpi(currentSettings.upi || '');
     setFooter(currentSettings.footer || 'Thank you! Come again');
     setLogo(currentSettings.logo || '');
-    setCurrency(currentSettings.currency || 'Rs.');
+    setCurrency(currentSettings.currency || '₹');
     setLanguage(currentSettings.language || 'English');
     setFinancialYear(currentSettings.financialYear || '2026-27');
     setGstEnabled(currentSettings.gstEnabled !== false);
@@ -533,14 +558,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         <button
           type="button"
           onClick={() => setActiveSection('database')}
-          className={`flex-1 min-w-[120px] py-3 px-4 rounded-xl text-center text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer relative ${
+          className={`flex-1 min-w-[140px] py-3 px-4 rounded-xl text-center text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer relative ${
             activeSection === 'database'
               ? 'bg-white dark:bg-slate-850 text-indigo-650 dark:text-indigo-400 shadow-sm border border-slate-200/40 dark:border-slate-800/50'
               : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
           }`}
         >
-          <Database className="w-4 h-4" />
-          Data & System
+          <Database className="w-4 h-4 text-indigo-500" />
+          Backup & Restore
           {needsBackupAlert && (
             <span className="absolute top-2 right-2 w-2 h-2 bg-amber-500 rounded-full animate-ping" />
           )}
@@ -753,10 +778,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </label>
                   <input
                     type="text"
+                    maxLength={15}
                     value={gstin}
-                    onChange={(e) => setGstin(e.target.value)}
+                    onChange={(e) => setGstin(e.target.value.toUpperCase())}
                     placeholder="e.g. 27AAAAA1111A1Z1"
-                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-250 dark:border-slate-800 rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-200 outline-none focus:border-indigo-500 font-bold transition-colors"
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-250 dark:border-slate-800 rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-200 outline-none focus:border-indigo-500 font-bold transition-colors font-mono uppercase"
                   />
                 </div>
 
@@ -766,10 +792,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </label>
                   <input
                     type="text"
+                    maxLength={14}
                     value={fssai}
-                    onChange={(e) => setFssai(e.target.value)}
+                    onChange={(e) => setFssai(e.target.value.replace(/\D/g, '').slice(0, 14))}
                     placeholder="e.g. 10020022001122"
-                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-250 dark:border-slate-800 rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-200 outline-none focus:border-indigo-500 font-bold transition-colors"
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-250 dark:border-slate-800 rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-200 outline-none focus:border-indigo-500 font-bold transition-colors font-mono"
                   />
                 </div>
 
@@ -812,11 +839,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     onChange={(e) => setCurrency(e.target.value)}
                     className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-250 dark:border-slate-800 rounded-xl px-3 py-2.5 text-xs text-slate-800 dark:text-slate-200 outline-none focus:border-indigo-500 font-bold"
                   >
-                    <option value="Rs.">Rs. (Indian Rupee)</option>
-                    <option value="₹">₹ (Rupee Icon)</option>
-                    <option value="$">$ (US Dollar)</option>
-                    <option value="€">€ (Euro)</option>
-                    <option value="£">£ (Pound)</option>
+                    <option value="₹">₹ (INR Rupee Symbol)</option>
+                    <option value="Rs.">Rs. (Indian Rupee Text)</option>
+                    <option value="INR">INR (Currency Code)</option>
                   </select>
                 </div>
 
@@ -1582,122 +1607,172 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       )}
 
-      {/* Database Systems and Backups Panel */}
+      {/* Backup & Restore Systems Panel */}
       {activeSection === 'database' && (
-        <div className="space-y-6">
+        <div className="space-y-6 animate-fade-in">
           {/* Backup Alert Box */}
           {needsBackupAlert && (
-            <div className="bg-amber-50 dark:bg-amber-955/15 border border-amber-200/50 dark:border-amber-900/40 rounded-2xl p-4 text-amber-900 dark:text-amber-300 shadow-sm flex items-start gap-3 relative overflow-hidden select-none">
+            <div className="bg-amber-50 dark:bg-amber-955/15 border border-amber-200/50 dark:border-amber-900/40 rounded-2xl p-4 text-amber-900 dark:text-amber-300 shadow-xs flex items-start gap-3 relative overflow-hidden select-none">
               <AlertTriangle className="w-5 h-5 mt-0.5 text-amber-550 dark:text-amber-400 flex-shrink-0" />
               <div className="flex-1">
                 <h3 className="text-xs font-black uppercase text-amber-850 dark:text-amber-350 leading-none">
-                  Database Protection Safety Alert
+                  Backup Recommended: Protect Your Business Data
                 </h3>
-                <p className="text-[10px] text-amber-700/90 dark:text-amber-400/80 mt-1.5 font-semibold leading-relaxed">
+                <p className="text-[11px] text-amber-700/90 dark:text-amber-400/80 mt-1.5 font-semibold leading-relaxed">
                   {lastBackupTime 
-                    ? `Your database has not been exported for ${Math.round((Date.now() - new Date(lastBackupTime).getTime()) / 86400000)} days. Guard listings, registers, and credits by taking a clean JSON dump.` 
-                    : "Active database backup required! Preserve store ledger logs, closed bills, custom cashiers and inventories from accidental browser sandbox cleanings."}
+                    ? `Your database has not been backed up for ${Math.round((Date.now() - new Date(lastBackupTime).getTime()) / 86400000)} days. Export and save a copy to Google Drive, WhatsApp, or email to prevent accidental data loss.` 
+                    : "No backup created yet! Local data is stored on this device. Create a backup now and share it to Google Drive or Email so you can restore your shop records if your device is damaged, lost, or reset."}
                 </p>
                 <button
+                  type="button"
                   onClick={onExportData}
-                  className="mt-2.5 text-[10px] font-black uppercase text-amber-805 hover:text-amber-955 dark:text-amber-400 dark:hover:text-amber-250 underline flex items-center gap-1 cursor-pointer"
+                  className="mt-2.5 text-[11px] font-black uppercase text-amber-805 hover:text-amber-955 dark:text-amber-400 dark:hover:text-amber-250 underline flex items-center gap-1 cursor-pointer"
                 >
-                  📥 Export database dump file now
+                  <Upload className="w-3.5 h-3.5" />
+                  Export & Share Full Backup Now
                 </button>
               </div>
             </div>
           )}
 
-          {/* Core Database Panel details */}
+          {/* Backup & Export Card */}
           <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200/80 dark:border-slate-800/80 shadow-xs space-y-6">
-            <div className="border-b border-slate-100 dark:border-slate-800/50 pb-4 select-none">
-              <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-2">
-                <HardDrive className="w-5 h-5 text-indigo-500" />
-                IndexedDB Store Sandbox Capacity
-              </h3>
-              <p className="text-[11px] text-slate-400 dark:text-slate-500 font-medium mt-1">
-                Monitor storage quotas, populate instant mock templates, clear files, and perform backups.
+            <div className="border-b border-slate-100 dark:border-slate-800/50 pb-4 select-none flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-black text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                  <HardDrive className="w-5 h-5 text-indigo-500" />
+                  Full Database Backup & Cloud Share
+                </h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium mt-1">
+                  Exports everything into a single JSON file and saves to <code className="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded font-mono text-[10px] text-indigo-600 dark:text-indigo-400 font-bold">Documents/ShopPOS Pro/Backups/</code> with direct cloud sharing.
+                </p>
+              </div>
+              <div className="shrink-0">
+                <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-extrabold uppercase ${
+                  lastBackupTime 
+                    ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-800/40' 
+                    : 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200/60 dark:border-amber-800/40'
+                }`}>
+                  {lastBackupTime ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
+                  {lastBackupTime 
+                    ? `Backed Up: ${new Date(lastBackupTime).toLocaleDateString()}` 
+                    : 'No Backup Yet'}
+                </span>
+              </div>
+            </div>
+
+            {/* Scope of Included Backup Data */}
+            <div className="space-y-3">
+              <label className="block text-[10px] font-extrabold text-slate-400 dark:text-slate-500 uppercase tracking-widest">
+                Data Included In Full Backup Package
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div className="p-3 bg-slate-50 dark:bg-slate-950/50 border border-slate-200/60 dark:border-slate-800/60 rounded-2xl">
+                  <span className="block text-base font-black text-slate-850 dark:text-slate-100">{db.products.length}</span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase">Products & Stock</span>
+                </div>
+                <div className="p-3 bg-slate-50 dark:bg-slate-950/50 border border-slate-200/60 dark:border-slate-800/60 rounded-2xl">
+                  <span className="block text-base font-black text-slate-850 dark:text-slate-100">{db.sales.length}</span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase">Invoices & Bills</span>
+                </div>
+                <div className="p-3 bg-slate-50 dark:bg-slate-950/50 border border-slate-200/60 dark:border-slate-800/60 rounded-2xl">
+                  <span className="block text-base font-black text-slate-850 dark:text-slate-100">{db.customers.length}</span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase">Customers & Khata</span>
+                </div>
+                <div className="p-3 bg-slate-50 dark:bg-slate-950/50 border border-slate-200/60 dark:border-slate-800/60 rounded-2xl">
+                  <span className="block text-base font-black text-slate-850 dark:text-slate-100">{(db.purchases || []).length}</span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase">Purchase Orders</span>
+                </div>
+                <div className="p-3 bg-slate-50 dark:bg-slate-950/50 border border-slate-200/60 dark:border-slate-800/60 rounded-2xl">
+                  <span className="block text-base font-black text-slate-850 dark:text-slate-100">{(db.suppliers || []).length}</span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase">Suppliers</span>
+                </div>
+                <div className="p-3 bg-slate-50 dark:bg-slate-950/50 border border-slate-200/60 dark:border-slate-800/60 rounded-2xl">
+                  <span className="block text-base font-black text-slate-850 dark:text-slate-100">{(db.staff || []).length}</span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase">Staff & Cashiers</span>
+                </div>
+                <div className="p-3 bg-slate-50 dark:bg-slate-950/50 border border-slate-200/60 dark:border-slate-800/60 rounded-2xl">
+                  <span className="block text-base font-black text-slate-850 dark:text-slate-100">{(db.expenses || []).length}</span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase">Store Expenses</span>
+                </div>
+                <div className="p-3 bg-slate-50 dark:bg-slate-950/50 border border-slate-200/60 dark:border-slate-800/60 rounded-2xl">
+                  <span className="block text-base font-black text-slate-850 dark:text-slate-100">
+                    {((db.estimates || []).length) + ((db.deliveryChallans || []).length) + ((db.creditDebitNotes || []).length)}
+                  </span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase">Quotations & Docs</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Actions Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+              <button
+                type="button"
+                onClick={onExportData}
+                className="flex items-center justify-center gap-2.5 py-4 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black uppercase tracking-wider rounded-2xl transition-all active:scale-98 cursor-pointer shadow-md shadow-indigo-600/20 select-none"
+              >
+                <Upload className="w-4 h-4 stroke-[2.5px]" />
+                Export & Share Backup (JSON)
+              </button>
+
+              <label className="flex items-center justify-center gap-2.5 py-4 px-4 border-2 border-emerald-500/40 hover:border-emerald-500 bg-emerald-50/50 hover:bg-emerald-50 dark:bg-emerald-950/30 dark:hover:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 text-xs font-black uppercase tracking-wider rounded-2xl cursor-pointer transition-all active:scale-98 select-none shadow-xs">
+                <Download className="w-4 h-4 stroke-[2.5px] text-emerald-600 dark:text-emerald-400" />
+                Restore from Backup File (.JSON)
+                <input
+                  type="file"
+                  accept=".json"
+                  className="hidden"
+                  onChange={(e) => onImportData(e.target)}
+                />
+              </label>
+            </div>
+
+            {/* Storage and folder details */}
+            <div className="bg-slate-50 dark:bg-slate-950/50 rounded-2xl p-4 border border-slate-200/60 dark:border-slate-850 space-y-2">
+              <div className="flex justify-between items-center text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                <span>Local Device Storage Usage</span>
+                <span className="font-mono text-xs text-slate-700 dark:text-slate-300">{usedMB} MB of ~{totalMB} MB ({quotaPct.toFixed(1)}%)</span>
+              </div>
+              <div className="w-full bg-slate-200 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
+                <div 
+                  className={`h-full rounded-full transition-all duration-300 ${
+                    quotaPct > 85 ? 'bg-red-500' : quotaPct > 60 ? 'bg-amber-500' : 'bg-emerald-500'
+                  }`}
+                  style={{ width: `${Math.max(2, quotaPct).toFixed(1)}%` }}
+                />
+              </div>
+              <p className="text-[10px] text-slate-400 dark:text-slate-500 font-medium">
+                💡 <span className="font-bold">Cloud Safe Tip:</span> When you click "Export & Share Backup", use the share menu to send the JSON file to your Google Drive, email it to yourself, or send it on WhatsApp so your data is safe even if this phone is lost or replaced.
               </p>
             </div>
+          </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-              {/* Storage details col */}
-              <div className="space-y-4 lg:col-span-3 select-none">
-                <div className="space-y-1.5">
-                  <div className="flex justify-between items-center text-[10px] font-bold text-slate-450 dark:text-slate-400 uppercase tracking-wide">
-                    <span>Authorized Storage Sandbox Ratio</span>
-                    <span className="font-mono text-xs">{quotaPct.toFixed(2)} %</span>
-                  </div>
-                  
-                  <div className="w-full bg-slate-100 dark:bg-slate-950 h-3 rounded-full overflow-hidden border border-slate-200/20">
-                    <div 
-                      className={`h-full rounded-full transition-all duration-305 ${
-                        quotaPct > 85 ? 'bg-red-500' : quotaPct > 60 ? 'bg-amber-500' : 'bg-emerald-500'
-                      }`}
-                      style={{ width: `${quotaPct.toFixed(1)}%` }}
-                    />
-                  </div>
-                  
-                  <p className="text-[10px] text-slate-400 dark:text-slate-500 font-semibold text-right">
-                    Using {usedMB} MB of ~{totalMB} MB allocated browser disk space
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-3 gap-2 p-3 bg-slate-50 border border-slate-200/60 dark:bg-slate-950/45 dark:border-slate-850 rounded-xl text-center">
-                  <div>
-                    <span className="block text-sm font-black text-slate-800 dark:text-slate-100">{db.products.length}</span>
-                    <span className="text-[9px] text-slate-400 dark:text-slate-500 font-bold uppercase">Inventory</span>
-                  </div>
-                  <div>
-                    <span className="block text-sm font-black text-slate-800 dark:text-slate-100">{db.sales.length}</span>
-                    <span className="text-[9px] text-slate-400 dark:text-slate-500 font-bold uppercase">Bills closed</span>
-                  </div>
-                  <div>
-                    <span className="block text-sm font-black text-slate-800 dark:text-slate-100">{db.customers.length}</span>
-                    <span className="text-[9px] text-slate-400 dark:text-slate-500 font-bold uppercase">Creditors</span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2">
-                  <button
-                    onClick={onExportData}
-                    className="flex items-center justify-center gap-1.5 py-3 border border-slate-200 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-855 text-slate-700 dark:text-slate-300 text-xs font-black uppercase rounded-xl transition-all active:scale-95 cursor-pointer select-none"
-                  >
-                    <Upload className="w-4 h-4 text-indigo-500" />
-                    Download Backup JSON
-                  </button>
-
-                  <label className="flex items-center justify-center gap-1.5 py-3 border border-slate-200 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-855 text-slate-700 dark:text-slate-300 text-xs font-black uppercase rounded-xl cursor-pointer transition-all active:scale-95 select-none">
-                    <Download className="w-4 h-4 text-emerald-500" />
-                    Import/Restore JSON
-                    <input
-                      type="file"
-                      accept=".json"
-                      className="hidden"
-                      onChange={(e) => onImportData(e.target)}
-                    />
-                  </label>
-                </div>
-              </div>
-
-              {/* Developer sandboxes seeder / destructive section */}
-              <div className="lg:col-span-2 space-y-4">
-                {/* Clear database action button with confirmation dialog */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAdminPasscodeInput('');
-                    setWipeError(null);
-                    setShowWipePasscode(false);
-                    setIsWipeModalOpen(true);
-                  }}
-                  className="w-full flex items-center justify-center gap-1.5 py-3.5 bg-rose-50/50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/20 dark:hover:bg-rose-900/30 dark:text-rose-400 hover:border-rose-310 text-xs font-bold rounded-2xl transition-all active:scale-95 cursor-pointer border border-rose-100/60 dark:border-rose-900/30 font-black uppercase select-none"
-                >
-                  <Trash className="w-4 h-4 text-rose-505" />
-                  Wipe & Reset Register Base
-                </button>
-              </div>
+          {/* Destructive / Factory Reset Zone */}
+          <div className="bg-rose-50/60 dark:bg-rose-950/20 border border-rose-200/70 dark:border-rose-900/40 rounded-3xl p-6 space-y-3">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+              <h4 className="text-xs font-black uppercase text-rose-800 dark:text-rose-300 tracking-wider">
+                Danger Zone: Factory Reset
+              </h4>
             </div>
+            <p className="text-[11px] text-rose-700/90 dark:text-rose-400/80 font-medium leading-relaxed">
+              Wipes all products, customer ledgers, and transaction history. Please export a backup first before resetting.
+            </p>
+            <button
+              type="button"
+              id="settings-clear-all-data-btn"
+              onClick={() => {
+                setAdminPasscodeInput('');
+                setWipeError(null);
+                setShowWipePasscode(false);
+                setWipeStep(1);
+                setIsWipeModalOpen(true);
+              }}
+              className="inline-flex items-center justify-center gap-2 py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black rounded-xl transition-all active:scale-95 cursor-pointer uppercase select-none shadow-xs"
+            >
+              <Trash className="w-3.5 h-3.5" />
+              Clear All Data (Factory Reset)
+            </button>
           </div>
         </div>
       )}
@@ -1877,22 +1952,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         </div>
       )}
-      {/* WIPE & RESET CONFIRMATION WARNING MODAL WITH ADMIN PASSCODE */}
+      {/* WIPE & RESET TWO-STEP CONFIRMATION MODAL */}
       {isWipeModalOpen && (
         <div className="fixed inset-0 bg-slate-900/75 backdrop-blur-xs z-[9000] flex items-center justify-center p-4 animate-fade-in select-none">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl w-full max-w-md overflow-hidden shadow-2xl border border-rose-200 dark:border-rose-900/50 animate-in fade-in zoom-in-95 duration-150">
-            {/* Modal Header */}
-            <div className="p-5 bg-rose-50 dark:bg-rose-950/40 border-b border-rose-100 dark:border-rose-900/40 flex items-start gap-3.5">
-              <div className="w-10 h-10 rounded-2xl bg-rose-600 text-white flex items-center justify-center shrink-0 shadow-md">
-                <ShieldAlert className="w-6 h-6 animate-pulse" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="text-sm font-black text-rose-900 dark:text-rose-200 uppercase tracking-wide">
-                  Wipe & Reset Register Base
-                </h3>
-                <p className="text-[11px] font-bold text-rose-700 dark:text-rose-400 mt-0.5 leading-snug">
-                  Permanent & Irreversible Factory Reset
-                </p>
+          <div className="bg-white dark:bg-slate-900 rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl border border-rose-200 dark:border-rose-900/50 animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header with Step Progress Indicator */}
+            <div className="p-5 bg-rose-50 dark:bg-rose-950/40 border-b border-rose-100 dark:border-rose-900/40 flex items-start justify-between gap-3.5">
+              <div className="flex items-start gap-3.5">
+                <div className="w-10 h-10 rounded-2xl bg-rose-600 text-white flex items-center justify-center shrink-0 shadow-md">
+                  <ShieldAlert className="w-6 h-6 animate-pulse" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-black text-rose-900 dark:text-rose-200 uppercase tracking-wide">
+                      Clear All Data
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-200/70 dark:bg-rose-900/60 text-rose-800 dark:text-rose-300">
+                      Step {wipeStep} of 2
+                    </span>
+                  </div>
+                  <p className="text-[11px] font-bold text-rose-700 dark:text-rose-400 mt-0.5 leading-snug">
+                    {wipeStep === 1 ? 'Step 1: Permanent Data Loss Warning' : 'Step 2: Admin Master Passcode Authorization'}
+                  </p>
+                </div>
               </div>
               <button
                 type="button"
@@ -1900,110 +1982,204 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   setIsWipeModalOpen(false);
                   setAdminPasscodeInput('');
                   setWipeError(null);
+                  setWipeStep(1);
                 }}
-                className="w-8 h-8 rounded-full bg-rose-100/70 hover:bg-rose-200 text-rose-700 dark:bg-rose-900/40 dark:hover:bg-rose-900/60 dark:text-rose-300 flex items-center justify-center cursor-pointer transition-colors"
+                className="w-8 h-8 rounded-full bg-rose-100/70 hover:bg-rose-200 text-rose-700 dark:bg-rose-900/40 dark:hover:bg-rose-900/60 dark:text-rose-300 flex items-center justify-center cursor-pointer transition-colors shrink-0"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Modal Body */}
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                setWipeError(null);
-                if (!adminPasscodeInput.trim()) {
-                  setWipeError('Please enter admin master passcode.');
-                  return;
-                }
-                setIsWiping(true);
-                try {
-                  const enteredHash = await hashPassword(adminPasscodeInput.trim());
-                  if (enteredHash !== currentAuth.pwHash) {
-                    setWipeError('❌ Incorrect Admin Passcode! Verification failed.');
-                    setIsWiping(false);
-                    return;
-                  }
-                  // Verification Passed!
-                  setIsWipeModalOpen(false);
-                  setAdminPasscodeInput('');
-                  setWipeError(null);
-                  onClearAllData();
-                } catch (err: any) {
-                  setWipeError('Verification error. Please try again.');
-                } finally {
-                  setIsWiping(false);
-                }
-              }}
-              className="p-5 space-y-4"
-            >
-              {/* Danger Warning Box */}
-              <div className="p-3.5 bg-rose-50/70 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/30 rounded-2xl">
-                <p className="text-xs text-rose-800 dark:text-rose-300 leading-relaxed font-bold">
-                  ⚠️ <span className="font-black underline">WARNING:</span> This action will permanently erase all sales invoices, inventory items, customer credit accounts, supplier records, and transaction ledgers on this device.
-                </p>
-              </div>
+            {/* STEP 1: WARNING & SCOPE OF ERASURE */}
+            {wipeStep === 1 && (
+              <div className="p-5 space-y-4">
+                {/* Critical Alert Box */}
+                <div className="p-3.5 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 rounded-2xl flex items-start gap-2.5">
+                  <AlertTriangle className="w-5 h-5 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+                  <div className="text-xs text-rose-900 dark:text-rose-200 leading-relaxed">
+                    <p className="font-black uppercase tracking-wide mb-1 text-rose-700 dark:text-rose-300">
+                      Irreversible Factory Reset
+                    </p>
+                    <p className="font-semibold">
+                      This operation will permanently wipe and erase all database records from this device. Once executed, this data cannot be recovered.
+                    </p>
+                  </div>
+                </div>
 
-              {/* Passcode Input */}
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-black text-slate-700 dark:text-slate-300 uppercase tracking-wider block">
-                  Enter Admin Passcode to Confirm
-                </label>
-                <div className="relative">
-                  <input
-                    type={showWipePasscode ? 'text' : 'password'}
-                    value={adminPasscodeInput}
-                    onChange={(e) => {
-                      setAdminPasscodeInput(e.target.value);
-                      if (wipeError) setWipeError(null);
-                    }}
-                    placeholder="Enter Admin Master Passcode"
-                    autoFocus
-                    required
-                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-200 outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20 font-bold transition-all pr-10"
-                  />
+                {/* Detailed Erasure Checklist */}
+                <div className="space-y-2">
+                  <p className="text-[11px] font-black text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                    Records that will be permanently erased:
+                  </p>
+                  <div className="p-3 bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-2 text-xs text-slate-700 dark:text-slate-300">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" />
+                      <span><strong>Inventory & Products:</strong> Stock levels, pricing, barcodes, and HSN/GST mappings</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" />
+                      <span><strong>Sales & Invoices:</strong> All past bills, quotations, receipts, and cash register logs</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" />
+                      <span><strong>Accounts & Ledgers:</strong> Customer balances, reward points, and supplier purchase records</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" />
+                      <span><strong>Store Settings:</strong> Staff roster logins, branch profiles, and local cached data</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Redirect Note */}
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed font-medium">
+                  💡 You will be immediately logged out and taken to the <strong>First Login Setup Wizard</strong> to register a new store.
+                </p>
+
+                {/* Step 1 Actions */}
+                <div className="pt-2 flex items-center justify-end gap-2.5 border-t border-slate-100 dark:border-slate-800">
                   <button
                     type="button"
-                    onClick={() => setShowWipePasscode(!showWipePasscode)}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 cursor-pointer"
-                    tabIndex={-1}
+                    onClick={() => {
+                      setIsWipeModalOpen(false);
+                      setAdminPasscodeInput('');
+                      setWipeError(null);
+                      setWipeStep(1);
+                    }}
+                    className="px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors"
                   >
-                    {showWipePasscode ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    Cancel (Keep Data)
+                  </button>
+                  <button
+                    type="button"
+                    id="settings-proceed-wipe-step2-btn"
+                    onClick={() => {
+                      setWipeError(null);
+                      setWipeStep(2);
+                    }}
+                    className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-black uppercase tracking-wider rounded-xl flex items-center gap-2 shadow-md shadow-rose-600/20 cursor-pointer transition-all"
+                  >
+                    <span>Proceed to Step 2</span>
+                    <ArrowRight className="w-4 h-4" />
                   </button>
                 </div>
               </div>
+            )}
 
-              {/* Error feedback */}
-              {wipeError && (
-                <div className="p-2.5 bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-300 text-xs font-black rounded-xl border border-red-200 dark:border-red-800 animate-in fade-in flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 shrink-0 text-red-600" />
-                  <span>{wipeError}</span>
-                </div>
-              )}
+            {/* STEP 2: PASSCODE VERIFICATION & FINAL CONFIRMATION */}
+            {wipeStep === 2 && (
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setWipeError(null);
+                  if (!adminPasscodeInput.trim()) {
+                    setWipeError('Please enter admin master passcode.');
+                    return;
+                  }
+                  setIsWiping(true);
+                  try {
+                    const enteredHash = await hashPassword(adminPasscodeInput.trim());
+                    if (enteredHash !== currentAuth.pwHash) {
+                      setWipeError('❌ Incorrect Admin Passcode! Verification failed.');
+                      setIsWiping(false);
+                      return;
+                    }
+                    // Verification Passed! Ask for explicit final confirmation
+                    const confirmed = await showConfirm(
+                      'Are you sure you want to completely wipe and reset all store data?\n\n• All inventory products, sales bills, customer accounts, staff rosters, and store settings will be PERMANENTLY ERASED.\n• You will be redirected immediately to the First Login Setup page to configure a new store.\n\nClick "Confirm" to proceed and go to First Login Setup, or "Cancel" to keep all your data intact.',
+                      'Confirm Wipe & Reset — Return to First Login Setup?'
+                    );
+                    if (!confirmed) {
+                      setIsWiping(false);
+                      return;
+                    }
 
-              {/* Action Buttons */}
-              <div className="pt-2 flex items-center justify-end gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => {
                     setIsWipeModalOpen(false);
                     setAdminPasscodeInput('');
                     setWipeError(null);
-                  }}
-                  className="px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isWiping}
-                  className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-black uppercase tracking-wider rounded-xl flex items-center gap-1.5 shadow-md shadow-rose-600/20 cursor-pointer transition-all disabled:opacity-50"
-                >
-                  <Trash className="w-4 h-4" />
-                  <span>{isWiping ? 'Verifying...' : 'Confirm Factory Reset'}</span>
-                </button>
-              </div>
-            </form>
+                    setWipeStep(1);
+                    onClearAllData();
+                  } catch (err: any) {
+                    setWipeError('Verification error. Please try again.');
+                  } finally {
+                    setIsWiping(false);
+                  }
+                }}
+                className="p-5 space-y-4"
+              >
+                {/* Authorization Banner */}
+                <div className="p-3.5 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40 rounded-2xl flex items-start gap-2.5">
+                  <Key className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <div className="text-xs text-amber-900 dark:text-amber-200 leading-relaxed font-semibold">
+                    <p className="font-black uppercase tracking-wide mb-1 text-amber-800 dark:text-amber-300">
+                      Step 2: Admin Passcode Authorization
+                    </p>
+                    Please enter the Master Admin Passcode to authorize this irreversible factory reset.
+                  </div>
+                </div>
+
+                {/* Passcode Input */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-black text-slate-700 dark:text-slate-300 uppercase tracking-wider block">
+                    Admin Master Passcode
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showWipePasscode ? 'text' : 'password'}
+                      value={adminPasscodeInput}
+                      onChange={(e) => {
+                        setAdminPasscodeInput(e.target.value);
+                        if (wipeError) setWipeError(null);
+                      }}
+                      placeholder="Enter Admin Master Passcode"
+                      autoFocus
+                      required
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-200 outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20 font-bold transition-all pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowWipePasscode(!showWipePasscode)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 cursor-pointer"
+                      tabIndex={-1}
+                    >
+                      {showWipePasscode ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Error feedback */}
+                {wipeError && (
+                  <div className="p-2.5 bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-300 text-xs font-black rounded-xl border border-red-200 dark:border-red-800 animate-in fade-in flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0 text-red-600" />
+                    <span>{wipeError}</span>
+                  </div>
+                )}
+
+                {/* Step 2 Actions */}
+                <div className="pt-2 flex items-center justify-between gap-2.5 border-t border-slate-100 dark:border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWipeError(null);
+                      setWipeStep(1);
+                    }}
+                    className="px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer flex items-center gap-1.5 transition-colors"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    <span>Back to Step 1</span>
+                  </button>
+                  <button
+                    type="submit"
+                    id="settings-confirm-wipe-btn"
+                    disabled={isWiping}
+                    className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-black uppercase tracking-wider rounded-xl flex items-center gap-1.5 shadow-md shadow-rose-600/20 cursor-pointer transition-all disabled:opacity-50"
+                  >
+                    <Trash className="w-4 h-4" />
+                    <span>{isWiping ? 'Verifying...' : 'Confirm Factory Reset'}</span>
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { BarChart3, Download, TrendingUp, TrendingDown, DollarSign, Calendar, RefreshCcw, LogOut, Presentation } from 'lucide-react';
+import { BarChart3, Download, TrendingUp, TrendingDown, IndianRupee, Calendar, RefreshCcw, LogOut, Presentation } from 'lucide-react';
 import { AppDatabase, Sale, Expense } from '../types';
 import { formatCurrency, getTodayDateString, formatDate, getDateString, parseDateString, isSameDate, computeSaleProfit } from '../utils';
 import { useTranslation } from '../context/LocalizationContext';
@@ -44,13 +44,12 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     
     if (reportType === 'GSTR-1') {
       sales.forEach(s => {
-        const gstRate = s.gst || 0;
-        const totalAmount = s.total;
-        const taxableVal = totalAmount / (1 + (gstRate / 100));
-        const totalTax = totalAmount - taxableVal;
+        const totalAmount = Number(s.total) || 0;
+        const totalTax = typeof s.gst === 'number' && !isNaN(s.gst) ? s.gst : (s.gstPct ? (totalAmount - (totalAmount / (1 + (s.gstPct / 100)))) : 0);
+        const taxableVal = Math.max(0, totalAmount - totalTax);
         
         // Split based on whether it is inter-state
-        const isInterState = (s as any).interStateGst || false;
+        const isInterState = !!s.interStateGst;
         const igst = isInterState ? totalTax : 0;
         const cgst = isInterState ? 0 : totalTax / 2;
         const sgst = isInterState ? 0 : totalTax / 2;
@@ -75,10 +74,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       let totalSgst = 0;
       
       sales.forEach(s => {
-        const gstRate = s.gst || 0;
-        const taxableVal = s.total / (1 + (gstRate / 100));
-        const totalTax = s.total - taxableVal;
-        const isInterState = (s as any).interStateGst || false;
+        const totalAmount = Number(s.total) || 0;
+        const totalTax = typeof s.gst === 'number' && !isNaN(s.gst) ? s.gst : (s.gstPct ? (totalAmount - (totalAmount / (1 + (s.gstPct / 100)))) : 0);
+        const taxableVal = Math.max(0, totalAmount - totalTax);
+        const isInterState = !!s.interStateGst;
         
         totalTaxable += taxableVal;
         if (isInterState) {

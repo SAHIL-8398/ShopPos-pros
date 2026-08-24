@@ -15,7 +15,7 @@ import {
   CartesianGrid,
   Tooltip,
 } from 'recharts';
-import { BarChart3, TrendingUp, DollarSign, Receipt, Sparkles } from 'lucide-react';
+import { BarChart3, TrendingUp, IndianRupee, Receipt, Sparkles } from 'lucide-react';
 import { Sale, Expense } from '../types';
 import { formatCurrency, getDateString, isSameDate, computeSaleProfit } from '../utils';
 

@@ -4,14 +4,18 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Save, Trash, Scan, Sparkles, Image, Tag, MapPin, Percent, DollarSign, Layers, Camera, Upload } from 'lucide-react';
+import { X, Save, Trash, Scan, Sparkles, Image, Tag, MapPin, Percent, IndianRupee, Layers, Camera, Upload } from 'lucide-react';
 import { Product, Supplier } from '../types';
 import { useDialog } from '../context/DialogContext';
+import { isValidHsn } from '../utils';
 import { saveProductImageToAppFolder } from '../services/nativeStorage';
+import { CameraCaptureModal, optimizeImage } from './CameraCaptureModal';
 
 interface ProductFormModalProps {
   product: Product | null;
   suppliers: Supplier[];
+  branches?: { id: string; name: string }[];
+  activeBranchId?: string;
   onClose: () => void;
   onSave: (data: Partial<Product>, printBarcodeAfterSave?: boolean) => void;
   onDelete: (id: string) => void;
@@ -30,6 +34,8 @@ type FormTab = 'basic' | 'pricing' | 'logistics' | 'extra';
 export const ProductFormModal: React.FC<ProductFormModalProps> = ({
   product,
   suppliers,
+  branches = [],
+  activeBranchId,
   onClose,
   onSave,
   onDelete,
@@ -50,6 +56,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
   const [brand, setBrand] = useState<string>('');
   const [variant, setVariant] = useState<string>('');
   const [supplierId, setSupplierId] = useState<string>('');
+  const [branchId, setBranchId] = useState<string>('');
 
   // Financials & Taxes
   const [mrp, setMrp] = useState<number>(0);
@@ -81,16 +88,37 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
   const [hasAltUnit, setHasAltUnit] = useState<boolean>(false);
   const [altUnitName, setAltUnitName] = useState<string>('box');
   const [altUnitFactor, setAltUnitFactor] = useState<number>(12);
+  const [secondaryUnitPrice, setSecondaryUnitPrice] = useState<number | ''>('');
 
   // BOM/Manufacturing Recipe state
   const [bomItems, setBomItems] = useState<{ productId: string; qtyNeeded: number }[]>([]);
   const [recipeProductId, setRecipeProductId] = useState<string>('');
   const [recipeQty, setRecipeQty] = useState<number>(1);
 
+  // Camera capture modal & file input refs
+  const [isCameraModalOpen, setIsCameraModalOpen] = useState<boolean>(false);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  const hadBarcodeInitially = Boolean(product?.barcode && product.barcode.trim().length > 0);
+
+  const isSystemGenerated = product && hadBarcodeInitially
+    ? (product.isGeneratedBarcode === true ||
+       product.barcodeType === 'generated' ||
+       (product.isGeneratedBarcode === undefined && product.barcodeType === undefined && Boolean(product.barcode && /^45(\d{8}|\d{5})$/.test(product.barcode.trim()))))
+    : false;
+
   useEffect(() => {
     if (product) {
       setName(product.name || '');
       setBarcode(product.barcode || '');
+      const hadBc = Boolean(product.barcode && product.barcode.trim().length > 0);
+      const isGen = hadBc && (
+        product.isGeneratedBarcode === true ||
+        product.barcodeType === 'generated' ||
+        (product.isGeneratedBarcode === undefined && product.barcodeType === undefined && Boolean(product.barcode && /^45(\d{8}|\d{5})$/.test(product.barcode.trim())))
+      );
+      setBarcodeGenerated(isGen);
       setCategory(product.category || '');
       setSubcategory(product.subcategory || '');
       setBrand(product.brand || '');
@@ -114,18 +142,22 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
       setTags(product.tags || '');
       setIsFavorite(!!product.isFavorite);
       setImage(product.image || '');
-      setHasAltUnit(!!product.hasAltUnit);
-      setAltUnitName(product.altUnitName || 'box');
-      setAltUnitFactor(product.altUnitFactor || 12);
+      setHasAltUnit(Boolean(product.hasAltUnit || product.secondaryUnitName));
+      setAltUnitName(product.altUnitName || product.secondaryUnitName || 'box');
+      setAltUnitFactor(product.altUnitFactor || product.conversionFactor || 12);
+      setSecondaryUnitPrice(product.secondaryUnitPrice !== undefined ? product.secondaryUnitPrice : '');
       setBomItems(product.bomItems || []);
+      setBranchId(product.branchId || '');
     } else {
       setName('');
       setBarcode('');
+      setBarcodeGenerated(false);
       setCategory('Other');
       setSubcategory('');
       setBrand('');
       setVariant('');
       setSupplierId('');
+      setBranchId(activeBranchId || '');
       setMrp(0);
       setSellPrice(0);
       setWholesalePrice(0);
@@ -147,6 +179,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
       setHasAltUnit(false);
       setAltUnitName('box');
       setAltUnitFactor(12);
+      setSecondaryUnitPrice('');
       setBomItems([]);
     }
     setAdjustQty('');
@@ -156,28 +189,32 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 
   useEffect(() => {
     if (scannedBarcode) {
-      if (!product) {
+      if (!product || !hadBarcodeInitially || !isSystemGenerated) {
         setBarcode(scannedBarcode);
+        setBarcodeGenerated(false);
       }
       if (onConsumeScannedBarcode) {
         onConsumeScannedBarcode();
       }
     }
-  }, [scannedBarcode, onConsumeScannedBarcode, product]);
+  }, [scannedBarcode, onConsumeScannedBarcode, product, hadBarcodeInitially, isSystemGenerated]);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const processAndSetImage = async (source: string | File) => {
+    try {
+      const optimizedBase64 = await optimizeImage(source);
+      if (!optimizedBase64) return;
+      const saveRes = await saveProductImageToAppFolder(optimizedBase64, name || barcode || 'product');
+      setImage(saveRes.imageUri);
+    } catch (err) {
+      console.error('Error processing product image:', err);
+    }
+  };
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = async (uploadEvent) => {
-      const rawBase64 = uploadEvent.target?.result as string;
-      if (!rawBase64) return;
-      
-      const saveRes = await saveProductImageToAppFolder(rawBase64, name || barcode || 'product');
-      setImage(saveRes.imageUri);
-    };
-    reader.readAsDataURL(file);
+    await processAndSetImage(file);
+    e.target.value = '';
   };
 
   const duplicateProduct = barcode.trim()
@@ -188,8 +225,9 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
     let gen = '';
     let attempts = 0;
     do {
-      const random5Digits = Math.floor(10000 + Math.random() * 90000).toString();
-      gen = '45' + random5Digits;
+      // 8 random digits with '45' prefix = 10 digits total
+      const random8Digits = Math.floor(10000000 + Math.random() * 90000000).toString();
+      gen = '45' + random8Digits;
       attempts++;
     } while (products.some(p => p.barcode?.trim() === gen) && attempts < 100);
     setBarcode(gen);
@@ -202,8 +240,41 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
       showAlert('Product Name is required!', 'Required Field');
       return;
     }
-    if (!mrp) {
-      showAlert('MRP is required!', 'Required Field');
+    const numMrp = Number(mrp);
+    if (!mrp || isNaN(numMrp) || numMrp <= 0) {
+      showAlert('MRP must be a valid positive number greater than 0!', 'Invalid MRP');
+      return;
+    }
+    const numSell = sellPrice ? Number(sellPrice) : numMrp;
+    if (isNaN(numSell) || numSell < 0) {
+      showAlert('Selling price must be a valid positive amount!', 'Invalid Price');
+      return;
+    }
+    if (numSell > numMrp) {
+      showAlert('Under Legal Metrology Rules, Selling Price cannot exceed the Maximum Retail Price (MRP)!', 'Invalid Selling Price');
+      return;
+    }
+    const numBuy = Number(buyPrice);
+    if (buyPrice && (isNaN(numBuy) || numBuy < 0)) {
+      showAlert('Purchase / Buy price must be a non-negative number!', 'Invalid Buy Price');
+      return;
+    }
+    const numQty = Number(qty);
+    if (isNaN(numQty) || numQty < 0) {
+      showAlert('Stock quantity must be a non-negative number!', 'Invalid Quantity');
+      return;
+    }
+    if (hsn.trim() && !isValidHsn(hsn.trim())) {
+      showAlert('HSN/SAC Code must be 2, 4, 6, or 8 numeric digits.', 'Invalid HSN');
+      return;
+    }
+    const numGst = Number(gstPct);
+    if (isNaN(numGst) || numGst < 0 || numGst > 100) {
+      showAlert('GST Rate must be between 0% and 100%!', 'Invalid GST %');
+      return;
+    }
+    if (mfgDate && expiryDate && new Date(expiryDate) < new Date(mfgDate)) {
+      showAlert('Expiry Date cannot be earlier than Manufacturing Date (Mfg Date)!', 'Invalid Dates');
       return;
     }
     if (!expiryDate) {
@@ -222,8 +293,10 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
       }
     }
 
+    const finalIsGenerated = (product && hadBarcodeInitially) ? isSystemGenerated : barcodeGenerated;
+
     let printBarcodeAfter = false;
-    if (barcodeGenerated && trimmedBarcode) {
+    if (finalIsGenerated && trimmedBarcode && (!product || !hadBarcodeInitially)) {
       const confirmPrint = await showConfirm(
         `Barcode "${trimmedBarcode}" was generated for "${name.trim()}".\n\nWould you like to print barcode labels for this product now?`,
         'Print Barcode Labels'
@@ -234,6 +307,8 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
     onSave({
       name: name.trim(),
       barcode: trimmedBarcode,
+      isGeneratedBarcode: finalIsGenerated,
+      barcodeType: trimmedBarcode ? (finalIsGenerated ? 'generated' : 'scanned') : undefined,
       category,
       subcategory: subcategory.trim(),
       brand: brand.trim(),
@@ -260,7 +335,11 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
       hasAltUnit,
       altUnitName: hasAltUnit ? altUnitName.trim() : undefined,
       altUnitFactor: hasAltUnit ? Number(altUnitFactor) : undefined,
+      secondaryUnitName: hasAltUnit ? altUnitName.trim() : undefined,
+      conversionFactor: hasAltUnit ? Number(altUnitFactor) : undefined,
+      secondaryUnitPrice: hasAltUnit && secondaryUnitPrice !== '' ? Number(secondaryUnitPrice) : undefined,
       bomItems: bomItems.length > 0 ? bomItems : undefined,
+      branchId: branchId ? branchId : undefined,
     }, printBarcodeAfter);
   };
 
@@ -315,6 +394,23 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 
             {/* Product Image preview & uploader combo */}
             <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 bg-slate-50 dark:bg-slate-800/40 p-3 rounded-xl border border-slate-150 dark:border-slate-800">
+              {/* Hidden file inputs for direct device fallback */}
+              <input
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={handleImageUpload}
+                className="hidden"
+              />
+              <input
+                ref={galleryInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleImageUpload}
+                className="hidden"
+              />
+
               <div className="relative w-16 h-16 bg-slate-200 dark:bg-slate-800 rounded-xl flex items-center justify-center overflow-hidden border border-slate-300 dark:border-slate-700 shrink-0">
                 {image ? (
                   <img src={image} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
@@ -325,7 +421,8 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setImage('')}
-                    className="absolute top-1 right-1 bg-slate-900/90 text-white w-4 h-4 rounded-full text-[9px] flex items-center justify-center hover:bg-rose-600 transition-colors"
+                    className="absolute top-1 right-1 bg-slate-900/90 text-white w-4 h-4 rounded-full text-[9px] flex items-center justify-center hover:bg-rose-600 transition-colors cursor-pointer"
+                    title="Remove Photo"
                   >
                     ✕
                   </button>
@@ -335,73 +432,136 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                 <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">
                   Product Image (Camera / Gallery)
                 </span>
-                <div className="flex flex-wrap gap-2">
-                  <label className="bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-lg cursor-pointer flex items-center gap-1.5 transition-colors shadow-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsCameraModalOpen(true)}
+                    className="bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-[10px] font-black uppercase tracking-wider px-3 py-1.5 rounded-lg cursor-pointer flex items-center gap-1.5 transition-all shadow-xs"
+                    title="Open Camera to snap a product photo"
+                  >
                     <Camera className="w-3.5 h-3.5" />
                     <span>Take Photo</span>
-                    <input 
-                      type="file" 
-                      accept="image/*" 
-                      capture="environment" 
-                      onChange={handleImageUpload} 
-                      className="hidden" 
-                    />
-                  </label>
+                  </button>
 
-                  <label className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-lg cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center gap-1.5 transition-colors">
+                  <button
+                    type="button"
+                    onClick={() => galleryInputRef.current?.click()}
+                    className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[10px] font-black uppercase tracking-wider px-3 py-1.5 rounded-lg cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center gap-1.5 transition-colors active:scale-95"
+                    title="Select an existing photo from device gallery"
+                  >
                     <Upload className="w-3.5 h-3.5 text-slate-400" />
                     <span>Choose Gallery</span>
-                    <input 
-                      type="file" 
-                      accept="image/*" 
-                      onChange={handleImageUpload} 
-                      className="hidden" 
-                    />
-                  </label>
+                  </button>
                 </div>
               </div>
             </div>
 
             {/* Barcode / SKU scanning */}
             <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                Barcode SKU / QR / GTIN Code {product && <span className="text-[9px] text-indigo-500 font-extrabold tracking-normal lowercase">(cannot be changed once product is added)</span>}
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  Barcode SKU / QR / GTIN Code
+                </label>
+                {product && hadBarcodeInitially ? (
+                  isSystemGenerated ? (
+                    <span className="text-[9px] font-extrabold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded-md border border-amber-200 dark:border-amber-800 flex items-center gap-1 select-none">
+                      🔒 System Generated (Locked)
+                    </span>
+                  ) : (
+                    <span className="text-[9px] font-extrabold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-300 dark:border-emerald-700/80 flex items-center gap-1 select-none animate-pulse">
+                      📷 Scanned Barcode (Editable)
+                    </span>
+                  )
+                ) : (
+                  barcodeGenerated ? (
+                    <span className="text-[9px] font-extrabold text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/60 px-2 py-0.5 rounded-md border border-indigo-300 dark:border-indigo-700/80 flex items-center gap-1 select-none">
+                      ⚡ 10-Digit Generated (Locks on save)
+                    </span>
+                  ) : barcode.trim() ? (
+                    <span className="text-[9px] font-extrabold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-300 dark:border-emerald-700/80 flex items-center gap-1 select-none">
+                      📷 Custom / Scanned (Editable)
+                    </span>
+                  ) : product ? (
+                    <span className="text-[9px] font-extrabold text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/60 px-2 py-0.5 rounded-md border border-blue-300 dark:border-blue-700/80 flex items-center gap-1 select-none">
+                      🆕 No Barcode Set (Add or Gen)
+                    </span>
+                  ) : (
+                    <span className="text-[9px] text-slate-400 font-medium select-none">
+                      Optional (Scan or Gen)
+                    </span>
+                  )
+                )}
+              </div>
               <div className="flex gap-2">
                 <input
                   type="text"
-                  placeholder="Scan SKU or key barcode in..."
+                  placeholder={
+                    product !== null && hadBarcodeInitially && isSystemGenerated
+                      ? "System generated barcode (Locked)"
+                      : (!product || !hadBarcodeInitially)
+                      ? "Scan SKU, enter barcode, or tap Gen..."
+                      : "Scan SKU or key barcode in..."
+                  }
                   value={barcode}
-                  onChange={(e) => setBarcode(e.target.value)}
-                  disabled={product !== null}
-                  className={`flex-1 border rounded-xl px-3 py-2 text-xs outline-none font-bold ${
-                    product !== null
+                  onChange={(e) => {
+                    setBarcode(e.target.value);
+                    setBarcodeGenerated(false);
+                  }}
+                  disabled={product !== null && hadBarcodeInitially && isSystemGenerated}
+                  className={`flex-1 border rounded-xl px-3 py-2 text-xs outline-none font-bold transition-all duration-300 ${
+                    product !== null && hadBarcodeInitially && isSystemGenerated
                       ? 'bg-slate-100 dark:bg-slate-900 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-slate-800 cursor-not-allowed'
-                      : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white focus:border-indigo-505'
+                      : product !== null && hadBarcodeInitially && !isSystemGenerated
+                      ? 'bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-400 dark:border-emerald-600 text-slate-900 dark:text-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/30 animate-barcode-highlight'
+                      : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white focus:border-indigo-500'
                   }`}
                 />
-                {!product && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={handleGenerateBarcode}
-                      className="px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl flex items-center justify-center cursor-pointer font-extrabold active:scale-95 transition-all text-[10px] gap-1 shrink-0"
-                      title="Auto-Generate unique 7-digit Barcode starting with 45"
-                    >
-                      <Sparkles className="w-3 h-3" />
-                      <span>Gen</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onOpenScanner('barcode')}
-                      className="px-3 bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 text-white border dark:border-slate-700 rounded-xl flex items-center justify-center cursor-pointer font-bold active:scale-95 transition-all shrink-0"
-                      title="Scan with Camera"
-                    >
-                      <Scan className="w-4 h-4" />
-                    </button>
-                  </>
+                {(!product || !hadBarcodeInitially) && (
+                  <button
+                    type="button"
+                    onClick={handleGenerateBarcode}
+                    className="px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl flex items-center justify-center cursor-pointer font-extrabold active:scale-95 transition-all text-[10px] gap-1 shrink-0"
+                    title="Auto-Generate unique 10-digit Barcode starting with 45"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    <span>Gen</span>
+                  </button>
+                )}
+                {(!product || !hadBarcodeInitially || !isSystemGenerated) && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenScanner('barcode')}
+                    className={`px-3 rounded-xl flex items-center justify-center cursor-pointer font-bold active:scale-95 transition-all shrink-0 ${
+                      product !== null && hadBarcodeInitially && !isSystemGenerated
+                        ? 'bg-emerald-700 hover:bg-emerald-600 text-white border border-emerald-500 shadow-sm shadow-emerald-700/20'
+                        : 'bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 text-white border dark:border-slate-700'
+                    }`}
+                    title="Scan with Camera"
+                  >
+                    <Scan className="w-4 h-4" />
+                  </button>
                 )}
               </div>
+              {product && hadBarcodeInitially && isSystemGenerated && (
+                <p className="text-[10px] text-slate-400 dark:text-slate-500 font-medium mt-1">
+                  🔒 System-generated barcodes cannot be edited after saving to prevent barcode conflicts.
+                </p>
+              )}
+              {product && hadBarcodeInitially && !isSystemGenerated && (
+                <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold mt-1 flex items-center gap-1">
+                  ✓ Scanned / Custom Barcode: You can edit this number or tap the camera icon to re-scan.
+                </p>
+              )}
+              {product && !hadBarcodeInitially && (
+                <p className="text-[10px] text-indigo-600 dark:text-indigo-400 font-medium mt-1 flex items-center gap-1">
+                  💡 This product currently has no barcode. You can scan/type one or tap Gen to create a 10-digit code. Auto-generated barcodes lock upon saving; scanned codes remain editable.
+                </p>
+              )}
+              {!product && (
+                <p className="text-[10px] text-slate-400 dark:text-slate-500 font-normal mt-1">
+                  💡 Scan with camera, enter a custom barcode, or click Gen for a unique 10-digit barcode (45XXXXXXXX).
+                </p>
+              )}
               {duplicateProduct && (
                 <p className="text-[11px] text-rose-500 dark:text-rose-400 font-bold mt-1.5 flex items-center gap-1">
                   ⚠️ Duplicate Barcode: Already assigned to &ldquo;{duplicateProduct.name}&rdquo;
@@ -510,6 +670,27 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                 ))}
               </select>
             </div>
+
+            {/* Branch Location select (invisible if only one or no branch) */}
+            {branches && branches.length > 1 && (
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                  🏢 Branch Location
+                </label>
+                <select
+                  value={branchId}
+                  onChange={(e) => setBranchId(e.target.value)}
+                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-white outline-none focus:border-indigo-500 font-bold"
+                >
+                  <option value="">All Branches (Shared Stock)</option>
+                  {branches.map(b => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           {/* SECTION 2: PRICING & TAXES */}
@@ -523,7 +704,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
-                  <DollarSign className="w-3 h-3" />
+                  <IndianRupee className="w-3 h-3" />
                   MRP Maximum Price *
                 </label>
                 <input
@@ -540,7 +721,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1 text-indigo-650 dark:text-indigo-400">
-                  <DollarSign className="w-3 h-3" />
+                  <IndianRupee className="w-3 h-3" />
                   Selling Retail Price
                 </label>
                 <input
@@ -668,6 +849,16 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                   <option value="ml">ml (Millilitres)</option>
                   <option value="box">box (Boxes)</option>
                   <option value="pack">pack (Packets)</option>
+                  <option value="dozen">dozen (Dozens)</option>
+                  <option value="bag">bag (Bags)</option>
+                  <option value="quintal">quintal (Quintals / 100kg)</option>
+                  <option value="bottle">bottle (Bottles)</option>
+                  <option value="can">can (Cans)</option>
+                  <option value="strip">strip (Strips / Pharma)</option>
+                  <option value="bundle">bundle (Bundles)</option>
+                  <option value="meter">meter (Meters / Fabric)</option>
+                  <option value="roll">roll (Rolls)</option>
+                  <option value="set">set (Sets)</option>
                 </select>
               </div>
             </div>
@@ -736,12 +927,12 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
               </h4>
             </div>
 
-            {/* Alternate Unit packaging toggle */}
-            <div className="bg-slate-50 dark:bg-slate-800/40 p-3 rounded-2xl border border-slate-150 dark:border-slate-800 space-y-3">
+            {/* Alternate / Secondary Unit packaging toggle */}
+            <div className="bg-slate-50 dark:bg-slate-800/40 p-3.5 rounded-2xl border border-slate-150 dark:border-slate-800 space-y-3">
               <div className="flex items-center justify-between">
                 <div>
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-100 block">Enable Bulk Packaging Unit</span>
-                  <span className="text-[10px] text-slate-400 block">Pieces to Cartons/Boxes conversions (e.g. 1 Box = 12 pcs)</span>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-100 block">Enable Secondary / Alternate Selling Unit</span>
+                  <span className="text-[10px] text-slate-400 block">Sell in secondary units e.g. Stock in "box", sell in "piece", or stock in "kg", sell in "gram"</span>
                 </div>
                 <input
                   type="checkbox"
@@ -752,30 +943,55 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
               </div>
 
               {hasAltUnit && (
-                <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100 dark:border-slate-800 animate-fade-in">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                      Packaging Name
-                    </label>
-                    <input
-                      type="text"
-                      value={altUnitName}
-                      onChange={(e) => setAltUnitName(e.target.value)}
-                      placeholder="e.g. Box, Carton"
-                      className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-white outline-none focus:border-indigo-500 font-bold"
-                    />
+                <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800 animate-fade-in">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                        Secondary Unit Name
+                      </label>
+                      <input
+                        type="text"
+                        value={altUnitName}
+                        onChange={(e) => setAltUnitName(e.target.value)}
+                        placeholder="e.g. piece, pouch, gram, strip"
+                        className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-white outline-none focus:border-indigo-500 font-bold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                        Conversion Factor (1 {unit || 'unit'} = X {altUnitName || 'sec'})
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={altUnitFactor}
+                        onChange={(e) => setAltUnitFactor(Math.max(1, Number(e.target.value)))}
+                        className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-white outline-none focus:border-indigo-500 font-bold"
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                      Ratio (base {unit || 'pcs'} per bulk Unit)
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      value={altUnitFactor}
-                      onChange={(e) => setAltUnitFactor(Number(e.target.value))}
-                      className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-white outline-none focus:border-indigo-500 font-bold"
-                    />
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1">
+                        <IndianRupee className="w-3 h-3 text-indigo-500" />
+                        Secondary Unit Price (Optional Override)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={secondaryUnitPrice}
+                        onChange={(e) => setSecondaryUnitPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                        placeholder={`Default: Rs.${((sellPrice || mrp) / (altUnitFactor || 1)).toFixed(2)}`}
+                        className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-white outline-none focus:border-indigo-500 font-bold"
+                      />
+                    </div>
+                    <div className="flex items-center">
+                      <div className="p-2.5 bg-indigo-50 dark:bg-indigo-950/30 rounded-xl border border-indigo-100 dark:border-indigo-900/40 text-[10px] text-indigo-700 dark:text-indigo-300 font-semibold w-full">
+                        ℹ️ 1 {unit || 'unit'} contains {altUnitFactor || 1} {altUnitName || 'sec'}. Selling 1 {altUnitName || 'sec'} deducts {(1 / (altUnitFactor || 1)).toFixed(4)} {unit || 'unit'} from main stock.
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -983,6 +1199,14 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
           )}
         </div>
       </div>
+
+      {/* In-App Live Camera Capture Modal */}
+      <CameraCaptureModal
+        isOpen={isCameraModalOpen}
+        onClose={() => setIsCameraModalOpen(false)}
+        onCapture={(base64Img) => processAndSetImage(base64Img)}
+        productName={name}
+      />
     </div>
   );
 };

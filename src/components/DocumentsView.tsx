@@ -18,7 +18,12 @@ import {
   generateEWayBillPDF, 
   generatePurchaseOrderPDF, 
   generateCreditDebitNotePDF, 
-  copyToClipboard 
+  copyToClipboard,
+  INDIAN_STATES,
+  isValidGstin,
+  cleanIndianPhone,
+  isValidEmail,
+  isValidVehicleNumber
 } from '../utils';
 import { printPdfDocument, sharePdfDocument } from '../services/printService';
 import { useDialog } from '../context/DialogContext';
@@ -114,21 +119,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
     if (saved) {
       try { return JSON.parse(saved); } catch (e) { console.error(e); }
     }
-    return [
-      {
-        id: 'est_1',
-        estimateNo: 'EST-2026-001',
-        date: '2026-07-04',
-        customerName: 'Aman Verma',
-        customerPhone: '9876543210',
-        customerAddress: 'Sec 15, Dwarka, Delhi',
-        items: [
-          { name: 'Organic Mustard Oil 1L', price: 185, qty: 5, unit: 'Bottle' },
-          { name: 'Basmati Rice Premium 5kg', price: 650, qty: 2, unit: 'Pack' }
-        ],
-        total: 2225
-      }
-    ];
+    return [];
   });
 
   // 2. Purchase Orders
@@ -137,20 +128,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
     if (saved) {
       try { return JSON.parse(saved); } catch (e) { console.error(e); }
     }
-    return [
-      {
-        id: 'po_1',
-        poNo: 'PO-2026-104',
-        date: '2026-07-03',
-        supplierName: 'Garg Wholesale Traders',
-        items: [
-          { name: 'Whole Wheat Atta 10kg', price: 340, qty: 50 },
-          { name: 'Refined Sugar 1kg', price: 38, qty: 100 }
-        ],
-        total: 20800,
-        status: 'Sent'
-      }
-    ];
+    return [];
   });
 
   // 3. Delivery Challans
@@ -159,20 +137,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
     if (saved) {
       try { return JSON.parse(saved); } catch (e) { console.error(e); }
     }
-    return [
-      {
-        id: 'dc_1',
-        challanNo: 'CH-2026-509',
-        date: '2026-07-04',
-        customerName: 'Aman Verma',
-        vehicleNo: 'DL-3C-AQ-9912',
-        items: [
-          { name: 'Organic Mustard Oil 1L', qty: 5 },
-          { name: 'Basmati Rice Premium 5kg', qty: 2 }
-        ],
-        status: 'Dispatched'
-      }
-    ];
+    return [];
   });
 
   // 4. Credit / Debit Notes
@@ -181,17 +146,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
     if (saved) {
       try { return JSON.parse(saved); } catch (e) { console.error(e); }
     }
-    return [
-      {
-        id: 'note_1',
-        noteNo: 'CN-2026-004',
-        date: '2026-07-02',
-        type: 'Credit Note',
-        partyName: 'Rahul Sharma',
-        amount: 320,
-        reason: 'Expired batch return refund'
-      }
-    ];
+    return [];
   });
 
   // 5. E-Way Bills & History
@@ -200,23 +155,12 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
     if (saved) {
       try { return JSON.parse(saved); } catch (e) { console.error(e); }
     }
-    return [
-      {
-        id: 'eway_1',
-        billNo: 'EWAY-884920194812',
-        date: '2026-07-04 14:30',
-        vehicleNo: 'DL-3C-AQ-4491',
-        transporterId: 'GST-TRANS-88219',
-        fromLocation: 'Delhi Main Office',
-        toLocation: 'Dwarka Central Logistics',
-        status: 'ACTIVE'
-      }
-    ];
+    return [];
   });
 
   const [ewayVehicleNo, setEwayVehicleNo] = useState<string>('');
   const [ewayTransporterId, setEwayTransporterId] = useState<string>('');
-  const [ewayFromOffice, setEwayFromOffice] = useState<string>('Delhi Main Head Office');
+  const [ewayFromOffice, setEwayFromOffice] = useState<string>(settings.address || 'Store Head Office');
   const [ewayToLocation, setEwayToLocation] = useState<string>('');
   const [ewayBillGenerated, setEwayBillGenerated] = useState<EWayBillRecord | null>(null);
 
@@ -226,30 +170,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
     if (saved) {
       try { return JSON.parse(saved); } catch (e) { console.error(e); }
     }
-    return [
-      { 
-        id: 'b_1', 
-        name: 'Delhi Head Office', 
-        legalName: settings.shopName || 'ShopPOS Retail Enterprises Ltd',
-        gstin: settings.gstin || '07AAAAA1111A1Z1', 
-        address: settings.address || 'Hauz Khas, New Delhi',
-        phone: settings.phone || '9876543210',
-        email: 'delhi@shoppos.in',
-        state: 'Delhi (07)',
-        active: true 
-      },
-      { 
-        id: 'b_2', 
-        name: 'Mumbai Retail Branch', 
-        legalName: 'ShopPOS Western Logistics LLP',
-        gstin: '27BBBBB2222B2Z2', 
-        address: 'Andheri West, Mumbai, Maharashtra', 
-        phone: '9822334455',
-        email: 'mumbai@shoppos.in',
-        state: 'Maharashtra (27)',
-        active: false 
-      }
-    ];
+    return [];
   });
 
   const [editingBranch, setEditingBranch] = useState<BranchItem | null>(null);
@@ -522,6 +443,10 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
       showAlert('Vehicle Number and Destination Location are required!', 'Missing Field');
       return;
     }
+    if (!isValidVehicleNumber(ewayVehicleNo.trim())) {
+      showAlert('Please enter a valid vehicle registration number (e.g. MH12AB1234)!', 'Invalid Vehicle Number');
+      return;
+    }
     
     const newBill: EWayBillRecord = {
       id: `eway_${Date.now()}`,
@@ -594,6 +519,19 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
       showAlert('GSTIN ID is required for firm compliance!', 'Missing Field');
       return;
     }
+    if (!isValidGstin(branchForm.gstin)) {
+      showAlert('Invalid GSTIN ID! Must be 15 characters (e.g. 27AAAAA0000A1Z5).', 'Invalid GSTIN');
+      return;
+    }
+    const cleanedPhone = cleanIndianPhone(branchForm.phone || '');
+    if (branchForm.phone?.trim() && cleanedPhone.length !== 10) {
+      showAlert('Branch contact phone must be exactly 10 digits!', 'Invalid Phone');
+      return;
+    }
+    if (branchForm.email?.trim() && !isValidEmail(branchForm.email)) {
+      showAlert('Please enter a valid contact email for the branch!', 'Invalid Email');
+      return;
+    }
 
     if (editingBranch) {
       // Edit existing
@@ -605,7 +543,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
             legalName: branchForm.legalName?.trim() || branchForm.name!.trim(),
             gstin: branchForm.gstin!.trim().toUpperCase(),
             address: branchForm.address?.trim() || b.address,
-            phone: branchForm.phone?.trim() || b.phone,
+            phone: cleanedPhone || b.phone,
             email: branchForm.email?.trim() || b.email,
             state: branchForm.state?.trim() || b.state
           };
@@ -634,7 +572,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
         legalName: branchForm.legalName?.trim() || branchForm.name!.trim(),
         gstin: branchForm.gstin!.trim().toUpperCase(),
         address: branchForm.address?.trim() || 'New Store Address',
-        phone: branchForm.phone?.trim() || '',
+        phone: cleanedPhone || '',
         email: branchForm.email?.trim() || '',
         state: branchForm.state?.trim() || '',
         active: branches.length === 0
@@ -1501,32 +1439,48 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
                         <input
                           type="text"
                           placeholder="e.g. 07AAAAA1111A1Z1"
+                          maxLength={15}
                           value={branchForm.gstin}
-                          onChange={(e) => setBranchForm({ ...branchForm, gstin: e.target.value })}
+                          onChange={(e) => {
+                            const val = e.target.value.toUpperCase();
+                            const prefix = val.slice(0, 2);
+                            const matched = INDIAN_STATES.find(s => s.code === prefix);
+                            if (matched && !branchForm.state) {
+                              setBranchForm({ ...branchForm, gstin: val, state: `${matched.name} (${matched.code})` });
+                            } else {
+                              setBranchForm({ ...branchForm, gstin: val });
+                            }
+                          }}
                           required
                           className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-200 outline-none uppercase font-mono font-bold"
                         />
                       </div>
 
                       <div>
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">State / Union Territory</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. Delhi (07) or Maharashtra (27)"
-                          value={branchForm.state}
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">State / Union Territory (GST Code)</label>
+                        <select
+                          value={branchForm.state || ''}
                           onChange={(e) => setBranchForm({ ...branchForm, state: e.target.value })}
-                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-200 outline-none"
-                        />
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-200 outline-none font-medium"
+                        >
+                          <option value="">Select Indian State / UT</option>
+                          {INDIAN_STATES.map((st) => (
+                            <option key={st.code} value={`${st.name} (${st.code})`}>
+                              {st.code} - {st.name} ({st.type})
+                            </option>
+                          ))}
+                        </select>
                       </div>
 
                       <div>
                         <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Contact Phone</label>
                         <input
-                          type="text"
-                          placeholder="e.g. +91 9876543210"
+                          type="tel"
+                          maxLength={10}
+                          placeholder="e.g. 9876543210 (10 digits)"
                           value={branchForm.phone}
-                          onChange={(e) => setBranchForm({ ...branchForm, phone: e.target.value })}
-                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-200 outline-none"
+                          onChange={(e) => setBranchForm({ ...branchForm, phone: e.target.value.replace(/\D/g, '').slice(0, 10) })}
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-200 outline-none font-mono"
                         />
                       </div>
 
@@ -1577,67 +1531,75 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
 
               {/* Branches List */}
               <div className="space-y-3">
-                {branches.map(b => (
-                  <div 
-                    key={b.id} 
-                    className={`p-4 rounded-2xl border flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 transition-all ${
-                      b.active 
-                        ? 'bg-indigo-50/50 dark:bg-indigo-950/20 border-indigo-300 dark:border-indigo-800 shadow-xs' 
-                        : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800'
-                    }`}
-                  >
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-black text-slate-900 dark:text-white">{b.name}</span>
-                        {b.active && (
-                          <span className="text-[9px] font-black uppercase bg-indigo-600 text-white px-2 py-0.5 rounded-full">
-                            Active Terminal
-                          </span>
-                        )}
-                        {b.state && (
-                          <span className="text-[9px] font-semibold text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
-                            {b.state}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-slate-600 dark:text-slate-300 font-medium">
-                        {b.legalName && <span className="font-bold">{b.legalName} • </span>}
-                        <span>📍 {b.address}</span>
-                      </div>
-                      <div className="text-[11px] text-slate-500 font-mono flex flex-wrap gap-3 mt-1">
-                        <span>GSTIN: <strong className="text-slate-700 dark:text-slate-200">{b.gstin}</strong></span>
-                        {b.phone && <span>Phone: {b.phone}</span>}
-                        {b.email && <span>Email: {b.email}</span>}
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap gap-2 w-full sm:w-auto items-center">
-                      <button
-                        onClick={() => handleOpenEditBranch(b)}
-                        className="px-3 py-1.5 bg-white dark:bg-slate-900 hover:bg-slate-100 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-800 flex items-center gap-1.5 cursor-pointer shadow-xs"
-                      >
-                        <Edit2 className="w-3 h-3 text-slate-500" /> Edit
-                      </button>
-
-                      {!b.active && (
-                        <button
-                          onClick={() => handleSwitchBranch(b.id)}
-                          className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black uppercase flex items-center gap-1.5 cursor-pointer shadow-xs"
-                        >
-                          <ArrowLeftRight className="w-3 h-3" /> Switch
-                        </button>
-                      )}
-
-                      <button
-                        onClick={() => handleDeleteBranch(b.id)}
-                        className="p-2 bg-white dark:bg-slate-900 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-xl border border-slate-200 dark:border-slate-800"
-                        title="Delete Branch"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                {branches.length === 0 ? (
+                  <div className="p-8 text-center bg-slate-50 dark:bg-slate-950 border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">
+                    <Building2 className="w-8 h-8 text-slate-300 dark:text-slate-600 mx-auto mb-2" />
+                    <p className="text-xs font-bold text-slate-600 dark:text-slate-400">No secondary retail branches configured</p>
+                    <p className="text-[10px] text-slate-400 mt-1">Default billing uses your main store details from Settings. Click "+ Add Branch" above to create multiple retail locations or firm entities.</p>
                   </div>
-                ))}
+                ) : (
+                  branches.map(b => (
+                    <div 
+                      key={b.id} 
+                      className={`p-4 rounded-2xl border flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 transition-all ${
+                        b.active 
+                          ? 'bg-indigo-50/50 dark:bg-indigo-950/20 border-indigo-300 dark:border-indigo-800 shadow-xs' 
+                          : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800'
+                      }`}
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-black text-slate-900 dark:text-white">{b.name}</span>
+                          {b.active && (
+                            <span className="text-[9px] font-black uppercase bg-indigo-600 text-white px-2 py-0.5 rounded-full">
+                              Active Terminal
+                            </span>
+                          )}
+                          {b.state && (
+                            <span className="text-[9px] font-semibold text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
+                              {b.state}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-slate-600 dark:text-slate-300 font-medium">
+                          {b.legalName && <span className="font-bold">{b.legalName} • </span>}
+                          <span>📍 {b.address}</span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 font-mono flex flex-wrap gap-3 mt-1">
+                          <span>GSTIN: <strong className="text-slate-700 dark:text-slate-200">{b.gstin}</strong></span>
+                          {b.phone && <span>Phone: {b.phone}</span>}
+                          {b.email && <span>Email: {b.email}</span>}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2 w-full sm:w-auto items-center">
+                        <button
+                          onClick={() => handleOpenEditBranch(b)}
+                          className="px-3 py-1.5 bg-white dark:bg-slate-900 hover:bg-slate-100 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-800 flex items-center gap-1.5 cursor-pointer shadow-xs"
+                        >
+                          <Edit2 className="w-3 h-3 text-slate-500" /> Edit
+                        </button>
+
+                        {!b.active && (
+                          <button
+                            onClick={() => handleSwitchBranch(b.id)}
+                            className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black uppercase flex items-center gap-1.5 cursor-pointer shadow-xs"
+                          >
+                            <ArrowLeftRight className="w-3 h-3" /> Switch
+                          </button>
+                        )}
+
+                        <button
+                          onClick={() => handleDeleteBranch(b.id)}
+                          className="p-2 bg-white dark:bg-slate-900 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-xl border border-slate-200 dark:border-slate-800"
+                          title="Delete Branch"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           )}

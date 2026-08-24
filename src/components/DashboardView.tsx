@@ -123,6 +123,7 @@ interface DashboardViewProps {
   onOpenBillDetails: (saleId: string) => void;
   onLogout: () => void;
   onOpenStoreSetup?: () => void;
+  onStartNewBillWithScanner?: () => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -133,6 +134,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenBillDetails,
   onLogout,
   onOpenStoreSetup,
+  onStartNewBillWithScanner,
 }) => {
   const { t } = useTranslation();
   const settings = db.settings;
@@ -222,22 +224,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const netProfit = grossProfit - totalExpenses;
 
   // Outstanding credit balance calculations
-  const creditBills = db.sales.filter(
+  const creditBills = (db.sales || []).filter(
     (s) => s.paymentMethod === 'credit' && !s.creditPaid && !s.voided
   );
   const outstandingCredit = creditBills.reduce((sum, s) => sum + s.total, 0);
   const pendingCreditsCount = creditBills.length;
 
   // Alerts
-  const lowStockThreshold = db.settings.lowStockDefault || 10;
-  const expiryThreshold = db.settings.nearExpiryDefault || 30;
+  const lowStockThreshold = db.settings?.lowStockDefault || 10;
+  const expiryThreshold = db.settings?.nearExpiryDefault || 30;
   const today = new Date();
 
-  const predictiveAlerts = computePredictiveAlerts(db.products, db.sales);
+  const predictiveAlerts = computePredictiveAlerts(db.products || [], db.sales || []);
 
   const alertsCount =
-    db.products.reduce((count, p) => {
-      const limit = p.lowStockAlert !== null ? p.lowStockAlert : lowStockThreshold;
+    (db.products || []).reduce((count, p) => {
+      const limit = p.lowStockAlert !== null && p.lowStockAlert !== undefined ? p.lowStockAlert : lowStockThreshold;
       let flagged = false;
       if (p.qty <= limit) {
         count++;
@@ -246,7 +248,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       if (p.expiryDate) {
         const days = Math.ceil((new Date(p.expiryDate).getTime() - today.getTime()) / 86400000);
-        const alertDays = p.nearExpiryDays !== null ? p.nearExpiryDays : expiryThreshold;
+        const alertDays = p.nearExpiryDays !== null && p.nearExpiryDays !== undefined ? p.nearExpiryDays : expiryThreshold;
         if (days <= alertDays) {
           if (!flagged) count++;
         }
@@ -254,15 +256,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       return count;
     }, 0) +
     predictiveAlerts.filter((pa) => {
-      const p = db.products.find((prod) => prod.id === pa.id);
+      const p = (db.products || []).find((prod) => prod.id === pa.id);
       if (!p) return false;
-      const limit = p.lowStockAlert !== null ? p.lowStockAlert : lowStockThreshold;
+      const limit = p.lowStockAlert !== null && p.lowStockAlert !== undefined ? p.lowStockAlert : lowStockThreshold;
       return p.qty > limit;
     }).length;
 
   // Recent 5 bills strictly ordered by latest transaction first (chronological & invoice sequence, never by bill total)
   const recentBills = useMemo(() => {
-    return [...db.sales]
+    return [...(db.sales || [])]
       .filter((s) => !s.voided)
       .sort((a, b) => compareSales(a, b, 'date', 'desc'))
       .slice(0, 5);
@@ -471,8 +473,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
               <button
                 type="button"
-                onClick={() => onNavigate('billing')}
+                onClick={() => {
+                  if (onStartNewBillWithScanner) {
+                    onStartNewBillWithScanner();
+                  } else {
+                    onNavigate('billing');
+                  }
+                }}
                 className="bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-850 border border-slate-100 dark:border-slate-800/80 rounded-2xl py-3 px-1.5 flex flex-col items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition-all text-center shadow-2xs group"
+                title="Start new bill and open barcode scanner"
               >
                 <div className="w-8 h-8 rounded-xl bg-indigo-500/10 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 flex items-center justify-center group-hover:scale-105 transition-transform">
                   <ShoppingCart className="w-4 h-4" />

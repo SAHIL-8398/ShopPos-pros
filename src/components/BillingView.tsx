@@ -17,6 +17,7 @@ interface BillingViewProps {
   onRemoveFromCart: (productId: string) => void;
   onChangeCartQty: (productId: string, delta: number) => void;
   onSetCartQty?: (productId: string, qty: number) => void;
+  onUpdateCartItemUnit?: (productId: string, unitType: 'base' | 'secondary') => void;
   onClearCart: () => void;
   onOpenScanner: () => void;
   onCheckout: (customerInfo: { name: string; phone: string; address: string }) => void;
@@ -108,6 +109,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
   onRemoveFromCart,
   onChangeCartQty,
   onSetCartQty,
+  onUpdateCartItemUnit,
   onClearCart,
   onOpenScanner,
   onCheckout,
@@ -487,46 +489,81 @@ export const BillingView: React.FC<BillingViewProps> = ({
 
         {cart.length > 0 ? (
           <div className="space-y-1.5 max-h-[280px] overflow-y-auto pr-1">
-            {cart.map(item => (
-              <div
-                key={item.id}
-                className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 shadow-2xs rounded-xl p-2 flex justify-between items-center gap-2 hover:border-slate-200 dark:hover:border-slate-700 transition-colors"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="text-[11px] font-extrabold text-slate-800 dark:text-slate-100 truncate leading-tight">
-                    {item.name}
-                  </div>
-                  <div className="text-[9px] text-slate-450 dark:text-slate-500 font-bold mt-0.5">
-                    {settings?.currency || 'Rs.'}{formatCurrency(item.price)} × {item.qty} = <strong className="text-slate-700 dark:text-slate-300 font-extrabold">{settings?.currency || 'Rs.'}{formatCurrency(item.price * item.qty)}</strong>
-                  </div>
-                </div>
+            {cart.map(item => {
+              const matchedProd = products.find(p => p.id === item.id);
+              const hasSecUnit = Boolean(matchedProd && (matchedProd.hasAltUnit || matchedProd.secondaryUnitName));
+              const secUnitName = matchedProd?.secondaryUnitName || matchedProd?.altUnitName;
+              const isSecSelected = item.selectedUnit === 'secondary' || (secUnitName && item.unit === secUnitName);
 
-                <div className="flex items-center gap-1 flex-shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => onChangeCartQty(item.id, -1)}
-                    className="w-6 h-6 rounded-lg bg-rose-500/10 text-rose-650 dark:text-rose-400 font-black flex items-center justify-center hover:bg-rose-500/20 transition-colors active:scale-90 cursor-pointer"
-                    title="Decrease quantity (-1)"
-                  >
-                    <Minus className="w-3 h-3" />
-                  </button>
-                  <CartItemQtyInput
-                    item={item}
-                    onChangeCartQty={onChangeCartQty}
-                    onSetCartQty={onSetCartQty}
-                    onRemoveFromCart={onRemoveFromCart}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => onChangeCartQty(item.id, 1)}
-                    className="w-6 h-6 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-450 font-black flex items-center justify-center hover:bg-emerald-500/20 transition-colors active:scale-90 cursor-pointer"
-                    title="Increase quantity (+1)"
-                  >
-                    <Plus className="w-3 h-3" />
-                  </button>
+              return (
+                <div
+                  key={item.id}
+                  className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 shadow-2xs rounded-xl p-2 flex justify-between items-center gap-2 hover:border-slate-200 dark:hover:border-slate-700 transition-colors"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[11px] font-extrabold text-slate-800 dark:text-slate-100 truncate leading-tight">
+                      {item.name}
+                    </div>
+                    <div className="text-[9px] text-slate-450 dark:text-slate-500 font-bold mt-0.5 flex items-center gap-1.5 flex-wrap">
+                      <span>
+                        {settings?.currency || 'Rs.'}{formatCurrency(item.price)} × {item.qty} {item.unit || 'pcs'} = <strong className="text-slate-700 dark:text-slate-300 font-extrabold">{settings?.currency || 'Rs.'}{formatCurrency(item.price * item.qty)}</strong>
+                      </span>
+                      {hasSecUnit && onUpdateCartItemUnit && (
+                        <span className="inline-flex rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5 text-[8px] font-bold">
+                          <button
+                            type="button"
+                            onClick={() => onUpdateCartItemUnit(item.id, 'base')}
+                            className={`px-1.5 py-0.5 rounded-md transition-all ${
+                              !isSecSelected 
+                                ? 'bg-indigo-600 text-white shadow-2xs' 
+                                : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                            }`}
+                          >
+                            {matchedProd?.unit || 'Base'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onUpdateCartItemUnit(item.id, 'secondary')}
+                            className={`px-1.5 py-0.5 rounded-md transition-all ${
+                              isSecSelected 
+                                ? 'bg-indigo-600 text-white shadow-2xs' 
+                                : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                            }`}
+                          >
+                            {secUnitName || 'Sec'}
+                          </button>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => onChangeCartQty(item.id, -1)}
+                      className="w-6 h-6 rounded-lg bg-rose-500/10 text-rose-650 dark:text-rose-400 font-black flex items-center justify-center hover:bg-rose-500/20 transition-colors active:scale-90 cursor-pointer"
+                      title="Decrease quantity (-1)"
+                    >
+                      <Minus className="w-3 h-3" />
+                    </button>
+                    <CartItemQtyInput
+                      item={item}
+                      onChangeCartQty={onChangeCartQty}
+                      onSetCartQty={onSetCartQty}
+                      onRemoveFromCart={onRemoveFromCart}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => onChangeCartQty(item.id, 1)}
+                      className="w-6 h-6 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-450 font-black flex items-center justify-center hover:bg-emerald-500/20 transition-colors active:scale-90 cursor-pointer"
+                      title="Increase quantity (+1)"
+                    >
+                      <Plus className="w-3 h-3" />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <div className="text-center py-12 bg-white dark:bg-slate-900 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 select-none">
@@ -643,6 +680,18 @@ export const BillingView: React.FC<BillingViewProps> = ({
             {t('checkout')} → {settings?.currency || 'Rs.'}{formatCurrency(cartSubtotal)}
           </button>
         </div>
+      )}
+
+      {/* Fixed floating trigger action to directly start new bill / scan items when cart is empty */}
+      {cart.length === 0 && (
+        <button
+          type="button"
+          onClick={onOpenScanner}
+          className="fixed bottom-[96px] right-4 bg-indigo-600 hover:bg-indigo-700 text-white w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-500/30 active:scale-90 transition-transform cursor-pointer z-50 text-xl font-extrabold"
+          title="Start New Bill / Scan Items (+)"
+        >
+          <Plus className="w-5 h-5 stroke-[3px]" />
+        </button>
       )}
     </div>
   );

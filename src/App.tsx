@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion } from 'motion/react';
 import { 
   Home, 
@@ -32,7 +32,8 @@ import {
   FileText,
   ArrowLeft,
   BookOpen,
-  RotateCcw
+  RotateCcw,
+  Building
 } from 'lucide-react';
 
 import { AppDatabase, Product, Sale, Customer, Expense, Supplier, Staff, Settings, SaleItem, PurchaseItem } from './types';
@@ -46,7 +47,7 @@ import {
 } from './db';
 import { generateId, getTodayDateString, formatCurrency, playBeepSound, computePredictiveAlerts, translate, formatDate, formatHeaderDate, compareSales, isSameDate } from './utils';
 import { LocalizationProvider } from './context/LocalizationContext';
-import { initAppStorage } from './services/nativeStorage';
+import { initAppStorage, exportAndShareDatabaseBackup } from './services/nativeStorage';
 import { checkBiometricsAvailability, authenticateWithNativeBiometrics } from './services/biometricService';
 import { Capacitor } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
@@ -151,6 +152,7 @@ export default function App() {
   const [isStaffOpen, setIsStaffOpen] = useState<boolean>(false);
   const [isLabelsOpen, setIsLabelsOpen] = useState<boolean>(false);
   const [labelGeneratorProductId, setLabelGeneratorProductId] = useState<string | null>(null);
+  const [labelGeneratorProductIds, setLabelGeneratorProductIds] = useState<string[] | null>(null);
   const [isExpensesOpen, setIsExpensesOpen] = useState<boolean>(false);
   
   const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(false);
@@ -190,6 +192,61 @@ export default function App() {
   const [activeStaffId, setActiveStaffId] = useState<string | null>(() => {
     return localStorage.getItem('shoppos_active_staff_id');
   });
+
+  const [activeBranchId, setActiveBranchId] = useState<string>(() => {
+    return localStorage.getItem('shoppos_active_branch_id') || '';
+  });
+
+  const [suppliersInitialTab, setSuppliersInitialTab] = useState<'list' | 'supplier_detail' | 'po' | 'hist' | 'suggestions'>('list');
+
+  // Available branches list from DB or localStorage
+  const availableBranches = useMemo(() => {
+    if (db?.branches && db.branches.length > 0) return db.branches;
+    try {
+      const saved = localStorage.getItem('shoppos_branches');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return [];
+  }, [db?.branches]);
+
+  const hasMultipleBranches = availableBranches.length > 1;
+
+  const handleSelectActiveBranch = (bId: string) => {
+    const nextId = bId === 'all' ? '' : bId;
+    setActiveBranchId(nextId);
+    localStorage.setItem('shoppos_active_branch_id', nextId);
+    if (db) {
+      triggerSave({ ...db, activeBranchId: nextId });
+    }
+  };
+
+  // Branch-wise filtered data
+  const branchFilteredProducts = useMemo(() => {
+    if (!db?.products) return [];
+    if (!activeBranchId || activeBranchId === 'all') return db.products;
+    return db.products.filter(p => !p.branchId || p.branchId === activeBranchId);
+  }, [db?.products, activeBranchId]);
+
+  const branchFilteredSales = useMemo(() => {
+    if (!db?.sales) return [];
+    if (!activeBranchId || activeBranchId === 'all') return db.sales;
+    return db.sales.filter(s => !s.branchId || s.branchId === activeBranchId);
+  }, [db?.sales, activeBranchId]);
+
+  const branchFilteredDb = useMemo(() => {
+    if (!db) return null;
+    if (!activeBranchId || activeBranchId === 'all') return db;
+    return {
+      ...db,
+      products: branchFilteredProducts,
+      sales: branchFilteredSales,
+    };
+  }, [db, branchFilteredProducts, branchFilteredSales, activeBranchId]);
 
   // Day / Date Change (Midnight Rollover) Automatic Logout states
   const sessionDateRef = useRef<string>(getTodayDateString());
@@ -1483,6 +1540,39 @@ export default function App() {
     setCart(cart.map(i => i.id === id ? { ...i, qty: targetQty } : i));
   };
 
+  const handleUpdateCartItemUnit = (id: string, unitType: 'base' | 'secondary') => {
+    const existing = cart.find(i => i.id === id);
+    if (!existing) return;
+    const prod = db.products.find(p => p.id === id);
+    if (!prod) return;
+
+    if (unitType === 'secondary' && (prod.hasAltUnit || prod.secondaryUnitName)) {
+      const factor = prod.conversionFactor || prod.altUnitFactor || 1;
+      const secPrice = prod.secondaryUnitPrice !== undefined && prod.secondaryUnitPrice > 0
+        ? prod.secondaryUnitPrice
+        : Number(((prod.sellPrice || prod.mrp) / factor).toFixed(2));
+      const secUnit = prod.secondaryUnitName || prod.altUnitName || 'sec';
+
+      setCart(cart.map(i => i.id === id ? {
+        ...i,
+        unit: secUnit,
+        selectedUnit: 'secondary',
+        price: secPrice,
+        unitConversionRatio: 1 / factor,
+        baseQtyDeduction: 1 / factor,
+      } : i));
+    } else {
+      setCart(cart.map(i => i.id === id ? {
+        ...i,
+        unit: prod.unit || 'pcs',
+        selectedUnit: 'base',
+        price: prod.sellPrice || prod.mrp,
+        unitConversionRatio: 1,
+        baseQtyDeduction: 1,
+      } : i));
+    }
+  };
+
   const handleCompleteCheckout = async (checkoutDetails: any) => {
     if (isCheckingOutRef.current) return;
     isCheckingOutRef.current = true;
@@ -1554,13 +1644,32 @@ export default function App() {
         voided: false,
         creditCustId: finalCreditCustId,
         pointsRedeemed: checkoutDetails.pointsRedeemed || 0,
+        branchId: (activeBranchId && activeBranchId !== 'all') ? activeBranchId : undefined,
       };
 
-      // Deduct stock levels indices matched
+      // Update customer loyalty points (earn + spend)
+      const pointsPerSpend = db.settings?.loyaltyPointsPerSpend || 50;
+      const pointsEarned = Math.floor(sale.total / pointsPerSpend);
+      const pointsRedeemed = checkoutDetails.pointsRedeemed || 0;
+
+      if (finalCreditCustId) {
+        updatedCustomers = updatedCustomers.map(c => {
+          if (c.id === finalCreditCustId) {
+            const currentPts = c.loyaltyPoints !== undefined ? c.loyaltyPoints : 0;
+            const newPts = Math.max(0, currentPts - pointsRedeemed + pointsEarned);
+            return { ...c, loyaltyPoints: newPts };
+          }
+          return c;
+        });
+      }
+
+      // Deduct stock levels indices matched (proportional deduction if sold in secondary unit)
       const updatedProducts = db.products.map(p => {
         const cartItem = cart.find(i => i.id === p.id);
         if (cartItem) {
-          return { ...p, qty: Math.max(0, p.qty - cartItem.qty) };
+          const deductionRatio = cartItem.unitConversionRatio !== undefined ? cartItem.unitConversionRatio : (cartItem.baseQtyDeduction || 1);
+          const totalDeducted = cartItem.qty * deductionRatio;
+          return { ...p, qty: Math.max(0, Number((p.qty - totalDeducted).toFixed(4))) };
         }
         return p;
       });
@@ -2204,6 +2313,30 @@ export default function App() {
       try {
         const payload = JSON.parse(e.target?.result as string) as AppDatabase;
         if (payload && Array.isArray(payload.products) && payload.settings) {
+          const prodCount = payload.products.length;
+          const salesCount = payload.sales?.length || 0;
+          const custCount = payload.customers?.length || 0;
+          const poCount = payload.purchases?.length || 0;
+          const shopName = payload.settings?.shopName || 'Store';
+
+          const confirmed = await showConfirm(
+            `⚠️ RESTORE COMPLETE DATABASE FROM BACKUP\n\n` +
+            `Backup Details:\n` +
+            `• Store: ${shopName}\n` +
+            `• Products & Stock: ${prodCount} items\n` +
+            `• Sales & Invoices: ${salesCount} records\n` +
+            `• Customers & Khata: ${custCount} accounts\n` +
+            `• Purchase Orders: ${poCount} orders\n\n` +
+            `Restoring will replace all current data on this device with the backup data.\n\n` +
+            `Are you sure you want to proceed with full database restoration?`,
+            'Confirm Database Restoration'
+          );
+
+          if (!confirmed) {
+            inputEl.value = '';
+            return;
+          }
+
           // Sanitize IDs across imported collections to prevent duplicate ID collisions
           const ensureUniqueIds = <T extends { id: string }>(items: T[] | undefined): T[] => {
             if (!Array.isArray(items)) return [];
@@ -2232,15 +2365,25 @@ export default function App() {
             deliveryChallans: ensureUniqueIds(payload.deliveryChallans),
             creditDebitNotes: ensureUniqueIds(payload.creditDebitNotes),
             branches: ensureUniqueIds(payload.branches),
+            staffActivityLogs: Array.isArray(payload.staffActivityLogs) ? payload.staffActivityLogs : [],
+            meta: payload.meta || { billNo: 1001 },
+            activeBranchId: payload.activeBranchId || 'all',
           };
 
           await triggerSave(sanitizedPayload, { immediate: true });
-          await showAlert('Backup restored successfully from JSON with validated record integrity.', 'Restore Success');
+          const nowStr = new Date().toISOString();
+          setLastBackupTime(nowStr);
+          localStorage.setItem('shoppos_last_backup', nowStr);
+          await showAlert(
+            `Database restored successfully!\n\nRestored ${prodCount} products, ${salesCount} sales invoices, and ${custCount} customer accounts.`,
+            'Restore Complete'
+          );
         } else {
-          await showAlert('Invalid ShopPOS backup JSON schema format.', 'Restore Error');
+          await showAlert('Invalid ShopPOS backup JSON file. Please select a valid ShopPOS Pro backup .json file.', 'Invalid Backup File');
         }
       } catch (err) {
-        await showAlert('Error reading backup JSON payload.', 'Restore Error');
+        console.error('Backup import error:', err);
+        await showAlert('Error reading backup JSON file. The file may be corrupted or in an unsupported format.', 'Restore Failed');
       }
     };
     r.readAsText(file);
@@ -2250,8 +2393,40 @@ export default function App() {
   const handleClearResetDB = async () => {
     const empty = await createDefaultDatabase();
     await triggerSave(empty);
-    await showAlert('POS databases successfully formatted and reset.', 'Database Formatted');
-    setActiveTab('dashboard');
+
+    // Clear all cached documents and local storage records
+    localStorage.removeItem('shoppos_estimates');
+    localStorage.removeItem('shoppos_purchase_orders');
+    localStorage.removeItem('shoppos_delivery_challans');
+    localStorage.removeItem('shoppos_notes');
+    localStorage.removeItem('shoppos_eway_bills');
+    localStorage.removeItem('shoppos_branches');
+    localStorage.removeItem('shoppos_suspended_carts');
+    localStorage.removeItem('shoppos_last_backup');
+    localStorage.removeItem('shoppos_profiles');
+    localStorage.removeItem('shoppos_active_profile_id');
+    localStorage.removeItem('shoppos_hide_profile_banner');
+    localStorage.removeItem('shoppos_active_staff_id');
+
+    setCart([]);
+    setCheckoutCustInfo(null);
+    setSuspendedCarts([]);
+    setActiveProductId(null);
+    setActiveCustomerId(null);
+
+    // Directly log out and transition to new shop setup wizard (FirstLoginSetupForm)
+    if (activeStaffIdRef.current) {
+      handleSelectActiveStaff(null);
+    }
+    clearSessionData();
+    setIsAuthenticated(false);
+    setIsDayChangeWarningOpen(false);
+    setDayChangeCountdownSecs(null);
+    snoozeUntilMsRef.current = null;
+    setLoginError('');
+    setLoginPw('');
+    setLoginLockoutMsg(null);
+    setSessionLogoutReason(null);
   };
 
   const lowStockCount = db.products.filter(p => {
@@ -2840,6 +3015,31 @@ export default function App() {
               </div>
             </div>
 
+            {/* Active Branch Switcher (Only visible if > 1 branch exists) */}
+            {hasMultipleBranches && (
+              <div className="px-6 py-3.5 border-b border-slate-900/75 bg-indigo-950/20">
+                <div className="text-[9px] font-black text-indigo-400 uppercase tracking-widest mb-1.5 pl-0.5 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <Building className="w-3 h-3 text-indigo-400" />
+                    <span>Active Branch</span>
+                  </span>
+                  <span className="text-[8px] text-indigo-300 font-extrabold">{availableBranches.length} Branches</span>
+                </div>
+                <select
+                  value={activeBranchId || 'all'}
+                  onChange={(e) => handleSelectActiveBranch(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-800 text-slate-200 text-xs font-bold rounded-xl px-3 py-2 outline-none focus:border-indigo-500 cursor-pointer"
+                >
+                  <option value="all">🌐 All Branches</option>
+                  {availableBranches.map((b: any) => (
+                    <option key={b.id} value={b.id}>
+                      📍 {b.name || b.firmName} {b.location ? `(${b.location})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {/* Navigation Tabs Links */}
             <nav className="flex-1 px-4 py-6 space-y-2">
               {(['dashboard', 'billing', 'inventory', 'customers', 'documents', 'reports', 'settings'] as const).map(tab => (
@@ -2983,6 +3183,23 @@ export default function App() {
             </div>
             </div>
             <div className="flex items-center gap-1.5">
+              {/* Branch switcher in mobile header */}
+              {hasMultipleBranches && (
+                <select
+                  value={activeBranchId || 'all'}
+                  onChange={(e) => handleSelectActiveBranch(e.target.value)}
+                  className="bg-slate-900 border border-slate-800 text-indigo-300 text-[10px] font-black rounded-lg px-2 py-1 outline-none max-w-[100px] truncate cursor-pointer"
+                  title="Switch Branch"
+                >
+                  <option value="all">🌐 All</option>
+                  {availableBranches.map((b: any) => (
+                    <option key={b.id} value={b.id}>
+                      📍 {b.name || b.firmName}
+                    </option>
+                  ))}
+                </select>
+              )}
+
               {/* Notification button */}
               <button
                 type="button"
@@ -3036,7 +3253,7 @@ export default function App() {
           <main className="flex-1 w-full p-4 pt-16 md:pt-6 md:pl-72 md:pr-6 max-w-7xl mx-auto transition-all min-h-screen">
             {activeTab === 'dashboard' && (
               <DashboardView 
-                db={db}
+                db={branchFilteredDb || db}
                 onNavigate={setActiveTab}
                 onOpenAlerts={() => setIsAlertsOpen(true)}
                 onOpenHistory={() => setIsHistoryOpen(true)}
@@ -3045,17 +3262,23 @@ export default function App() {
                 }}
                 onLogout={handleLogout}
                 onOpenStoreSetup={() => setIsStoreOnboardingModalOpen(true)}
+                onStartNewBillWithScanner={() => {
+                  setActiveTab('billing');
+                  setScannerMode('bill');
+                  setIsScannerOpen(true);
+                }}
               />
             )}
 
             {activeTab === 'billing' && (
               <BillingView 
-                products={db.products}
+                products={branchFilteredProducts}
                 cart={cart}
                 onAddToCart={handleAddToCart}
                 onRemoveFromCart={handleRemoveFromCart}
                 onChangeCartQty={handleChangeCartQty}
                 onSetCartQty={handleSetCartQty}
+                onUpdateCartItemUnit={handleUpdateCartItemUnit}
                 onClearCart={on_billing_clear_cart}
                 onOpenScanner={() => {
                   setScannerMode('bill');
@@ -3087,9 +3310,9 @@ export default function App() {
 
             {activeTab === 'inventory' && (
               <InventoryView 
-                products={db.products}
+                products={branchFilteredProducts}
                 suppliers={db.suppliers}
-                sales={db.sales}
+                sales={branchFilteredSales}
                 onOpenProductModal={(id) => {
                   setActiveProductId(id);
                   setIsProductModalOpen(true);
@@ -3103,6 +3326,15 @@ export default function App() {
                 onBulkUpdateProducts={async (updatedProducts) => {
                   await triggerSave({ ...db, products: updatedProducts });
                 }}
+                onOpenPrintLabels={(productIds) => {
+                  setLabelGeneratorProductId(null);
+                  setLabelGeneratorProductIds(productIds);
+                  setIsLabelsOpen(true);
+                }}
+                onOpenSuppliersPO={(tab) => {
+                  setSuppliersInitialTab(tab || 'suggestions');
+                  setIsSuppliersOpen(true);
+                }}
               />
             )}
 
@@ -3110,6 +3342,7 @@ export default function App() {
               <CustomersView 
                 customers={db.customers}
                 sales={db.sales}
+                settings={db.settings}
                 onOpenCustomerModal={() => {
                   setActiveCustomerId(null);
                   setIsCustomerModalOpen(true);
@@ -3117,6 +3350,12 @@ export default function App() {
                 onOpenCustomerDetails={(id) => {
                   setActiveCustomerId(id);
                   setIsCustomerModalOpen(true);
+                }}
+                onSendPaymentReminder={async (customerId, reminderTimestamp) => {
+                  const updatedCustomers = db.customers.map(c => 
+                    c.id === customerId ? { ...c, lastReminderSent: reminderTimestamp } : c
+                  );
+                  await triggerSave({ ...db, customers: updatedCustomers }, { immediate: true });
                 }}
               />
             )}
@@ -3136,7 +3375,7 @@ export default function App() {
 
             {activeTab === 'reports' && (
               <ReportsView 
-                db={db}
+                db={branchFilteredDb || db}
                 onOpenDayDetails={setDayDetailsDate}
                 onExportCSV={handleExportCSV}
                 onOpenReturnModal={(saleId) => handleOpenReturnModal(saleId, false)}
@@ -3164,17 +3403,16 @@ export default function App() {
                   setIsLabelsOpen(true);
                 }}
                 onOpenExpenses={() => setIsExpensesOpen(true)}
-                onExportData={() => {
-                  const blob = new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' });
-                  const link = document.createElement('a');
-                  link.href = URL.createObjectURL(blob);
-                  link.download = `shoppos_backup_${getTodayDateString()}.json`;
-                  link.click();
-                  
+                onExportData={async () => {
+                  if (!db) return;
+                  const res = await exportAndShareDatabaseBackup(db);
                   const nowStr = new Date().toISOString();
-                  localStorage.setItem('shoppos_last_backup', nowStr);
                   setLastBackupTime(nowStr);
-                  showAlert('Safety database backup successfully exported!', 'Backup Success');
+                  if (res.success) {
+                    showAlert(`Database backup saved successfully!\n${res.message}`, 'Backup Complete');
+                  } else {
+                    showAlert(res.message, 'Backup Notice');
+                  }
                 }}
                 onImportData={handleImportBackupJSON}
                 onClearAllData={handleClearResetDB}
@@ -3264,6 +3502,8 @@ export default function App() {
             <ProductFormModal 
               product={activeProductId ? db.products.find(p => p.id === activeProductId) || null : null}
               suppliers={db.suppliers}
+              branches={availableBranches}
+              activeBranchId={activeBranchId !== 'all' ? activeBranchId : undefined}
               onClose={() => {
                 setIsProductModalOpen(false);
                 setActiveProductId(null);
@@ -3344,9 +3584,11 @@ export default function App() {
                   shopName={db.settings.shopName}
                   fssai={db.settings.fssai}
                   initialProductId={labelGeneratorProductId}
+                  initialProductIds={labelGeneratorProductIds}
                   onClose={() => {
                     setIsLabelsOpen(false);
                     setLabelGeneratorProductId(null);
+                    setLabelGeneratorProductIds(null);
                   }}
                   onQuickUpdateBarcode={async (productId, newBarcode) => {
                     const list = db.products.map(p => p.id === productId ? { ...p, barcode: newBarcode } : p);
@@ -3368,6 +3610,8 @@ export default function App() {
               onDeleteSupplier={handleDeleteSupplier}
               onSavePurchaseOrder={handleSavePurchaseOrder}
               currency={db.settings.currency || 'Rs.'}
+              initialTab={suppliersInitialTab}
+              lowStockDefault={db.settings.lowStockDefault}
             />
           )}
 
@@ -3400,6 +3644,7 @@ export default function App() {
             <CustomerFormModal 
               customer={activeCustomerId ? db.customers.find(c => c.id === activeCustomerId) || null : null}
               sales={db.sales}
+              settings={db.settings}
               onClose={() => {
                 setIsCustomerModalOpen(false);
                 setActiveCustomerId(null);
@@ -3407,6 +3652,12 @@ export default function App() {
               onSave={handleSaveCustomer}
               onDelete={handleDeleteCustomer}
               onMarkCreditPaid={handleMarkCreditPaid}
+              onSendPaymentReminder={async (customerId, reminderTimestamp) => {
+                const updatedCustomers = db.customers.map(c => 
+                  c.id === customerId ? { ...c, lastReminderSent: reminderTimestamp } : c
+                );
+                await triggerSave({ ...db, customers: updatedCustomers }, { immediate: true });
+              }}
             />
           )}
 
