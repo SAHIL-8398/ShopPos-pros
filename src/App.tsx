@@ -2311,12 +2311,17 @@ export default function App() {
     const r = new FileReader();
     r.onload = async (e) => {
       try {
-        const payload = JSON.parse(e.target?.result as string) as AppDatabase;
-        if (payload && Array.isArray(payload.products) && payload.settings) {
-          const prodCount = payload.products.length;
+        const rawJson = JSON.parse(e.target?.result as string);
+        const payload: AppDatabase = (rawJson?.database && (rawJson.database.products || rawJson.database.settings))
+          ? rawJson.database
+          : rawJson;
+
+        if (payload && (Array.isArray(payload.products) || payload.settings)) {
+          const prodCount = payload.products?.length || 0;
           const salesCount = payload.sales?.length || 0;
           const custCount = payload.customers?.length || 0;
           const poCount = payload.purchases?.length || 0;
+          const staffCount = payload.staff?.length || 0;
           const shopName = payload.settings?.shopName || 'Store';
 
           const confirmed = await showConfirm(
@@ -2326,9 +2331,10 @@ export default function App() {
             `• Products & Stock: ${prodCount} items\n` +
             `• Sales & Invoices: ${salesCount} records\n` +
             `• Customers & Khata: ${custCount} accounts\n` +
-            `• Purchase Orders: ${poCount} orders\n\n` +
-            `Restoring will replace all current data on this device with the backup data.\n\n` +
-            `Are you sure you want to proceed with full database restoration?`,
+            `• Purchase Orders: ${poCount} orders\n` +
+            `• Staff Members: ${staffCount} members\n\n` +
+            `⚠️ WARNING: Restoring will overwrite and replace all current products, sales, customers, khata balances, and settings on this device with the backup data.\n\n` +
+            `Do you want to proceed with full database restoration?`,
             'Confirm Database Restoration'
           );
 
@@ -2352,6 +2358,21 @@ export default function App() {
             });
           };
 
+          const maxBillNo = payload.sales?.length
+            ? Math.max(
+                ...payload.sales.map((s: Sale) =>
+                  typeof s.billNo === 'number' ? s.billNo : parseInt(String(s.billNo)) || 0
+                )
+              ) + 1
+            : 1001;
+
+          const meta = {
+            billNo: Math.max(Number(payload.meta?.billNo) || 1001, maxBillNo),
+            estimateNo: Number(payload.meta?.estimateNo) || 1,
+            challanNo: Number(payload.meta?.challanNo) || 1,
+            noteNo: Number(payload.meta?.noteNo) || 1,
+          };
+
           const sanitizedPayload: AppDatabase = {
             ...payload,
             products: ensureUniqueIds(payload.products),
@@ -2366,7 +2387,7 @@ export default function App() {
             creditDebitNotes: ensureUniqueIds(payload.creditDebitNotes),
             branches: ensureUniqueIds(payload.branches),
             staffActivityLogs: Array.isArray(payload.staffActivityLogs) ? payload.staffActivityLogs : [],
-            meta: payload.meta || { billNo: 1001 },
+            meta,
             activeBranchId: payload.activeBranchId || 'all',
           };
 
@@ -2375,7 +2396,7 @@ export default function App() {
           setLastBackupTime(nowStr);
           localStorage.setItem('shoppos_last_backup', nowStr);
           await showAlert(
-            `Database restored successfully!\n\nRestored ${prodCount} products, ${salesCount} sales invoices, and ${custCount} customer accounts.`,
+            `Database restored successfully!\n\nRestored ${prodCount} products, ${salesCount} sales invoices, ${custCount} customer accounts, and all settings.`,
             'Restore Complete'
           );
         } else {
@@ -2966,136 +2987,111 @@ export default function App() {
 
       {/* 📱 FULL POS CONTAINER SHELL */}
       {isAuthenticated && (
-        <div className="min-h-screen flex flex-col md:flex-row bg-slate-50 dark:bg-slate-950 font-sans antialiased text-slate-800 dark:text-slate-100">
+        <div className="min-h-screen flex flex-col md:flex-row bg-slate-50 dark:bg-slate-950 font-sans antialiased text-slate-800 dark:text-slate-100 w-full max-w-full overflow-x-hidden">
           
           {/* DESKTOP SIDEBAR NAVIGATION BRANDING */}
-          <aside className="hidden md:flex flex-col w-64 bg-slate-950 text-slate-200 fixed inset-y-0 left-0 z-40 select-none border-r border-slate-900 shadow-[2px_0_12px_rgba(0,0,0,0.15)] overflow-y-auto">
+          <aside className="hidden md:flex flex-col w-64 bg-slate-950 text-slate-200 fixed inset-y-0 left-0 z-40 select-none border-r border-slate-900 shadow-[2px_0_16px_rgba(0,0,0,0.25)] overflow-y-auto">
             {/* Branding Header Area */}
-            <div className="p-6 border-b border-slate-900/75 flex flex-col gap-2">
-              <div className="flex items-center gap-2">
-                <span className="text-lg font-extrabold text-indigo-400 tracking-tight flex items-center gap-2.5">
-                  <AppLogo size="sm" rounded="rounded-xl" />
-                  <span className="truncate max-w-[155px] font-black">{db.settings.shopName || 'ShopPOS'}</span>
-                </span>
+            <div className="p-5 border-b border-slate-900/80 flex flex-col gap-1.5 bg-slate-950">
+              <div className="flex items-center gap-2.5">
+                <AppLogo size="sm" rounded="rounded-xl" />
+                <div className="min-w-0 flex-1">
+                  <span className="truncate block text-base font-black text-white tracking-tight leading-tight">
+                    {db.settings.shopName || 'ShopPOS'}
+                  </span>
+                  <p className="text-[10px] text-slate-400 font-semibold tracking-wider uppercase mt-0.5">
+                    POS & Inventory
+                  </p>
+                </div>
               </div>
-              <p className="text-[10px] text-slate-500 dark:text-slate-500 font-extrabold uppercase tracking-widest leading-none mt-1 pl-1">
-                BILLING & INVENTORY CORE
-              </p>
             </div>
 
             {/* Operator Active Profile Area */}
-            <div className="px-6 py-5 border-b border-slate-900/75 bg-slate-900/10">
-              <div className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-2.5 pl-1">
-                Active Staff Profile
+            <div className="px-4 py-3.5 border-b border-slate-900/80 bg-slate-900/30">
+              <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+                <span>Cashier Session</span>
+                <span className="text-[9px] text-slate-400 font-semibold tracking-normal normal-case">
+                  {formatHeaderDate(new Date())}
+                </span>
               </div>
               {db.staff.find(s => s.id === activeStaffId) ? (
                 <button
                   type="button"
                   onClick={() => setIsStaffOpen(true)}
-                  className="w-full text-left font-black uppercase text-xs text-indigo-400 bg-indigo-500/5 hover:bg-indigo-500/10 px-3.5 py-2.5 rounded-xl transition-all flex items-center gap-2 cursor-pointer border border-indigo-500/15"
+                  className="w-full text-left text-xs text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 px-3 py-2 rounded-xl transition-all flex items-center justify-between cursor-pointer border border-indigo-500/20 group"
                   title="Switch cashier session / Clock out"
                 >
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  <span className="truncate font-bold tracking-wide">{db.staff.find(s => s.id === activeStaffId)?.name}</span>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                    <span className="truncate font-bold">{db.staff.find(s => s.id === activeStaffId)?.name}</span>
+                  </div>
+                  <span className="text-[9px] text-indigo-400/80 font-medium group-hover:text-indigo-300">Switch</span>
                 </button>
               ) : (
                 <button
                   type="button"
                   onClick={() => setIsStaffOpen(true)}
-                  className="w-full text-left font-bold uppercase text-[9px] text-slate-400 hover:text-white px-3 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-850 transition-all flex items-center gap-2 cursor-pointer border border-dashed border-slate-800 animate-pulse"
+                  className="w-full text-left font-bold text-xs text-slate-400 hover:text-white px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-850 transition-all flex items-center justify-between cursor-pointer border border-dashed border-slate-800"
                   title="Clock in cashier session"
                 >
-                  👤 Clock In Cashier
+                  <span>👤 Clock In Cashier</span>
+                  <span className="text-[10px] text-indigo-400 font-medium">Start</span>
                 </button>
               )}
-              {/* Localized Date Below Cashier Profile */}
-              <div className="mt-3.5 flex items-center gap-2 text-[10px] text-slate-500 font-bold select-none border-t border-slate-900/50 pt-3">
-                <Calendar className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />
-                <span className="truncate uppercase tracking-wider font-extrabold">{formatHeaderDate(new Date())}</span>
-              </div>
             </div>
 
-            {/* Active Branch Switcher (Only visible if > 1 branch exists) */}
-            {hasMultipleBranches && (
-              <div className="px-6 py-3.5 border-b border-slate-900/75 bg-indigo-950/20">
-                <div className="text-[9px] font-black text-indigo-400 uppercase tracking-widest mb-1.5 pl-0.5 flex items-center justify-between">
-                  <span className="flex items-center gap-1">
-                    <Building className="w-3 h-3 text-indigo-400" />
-                    <span>Active Branch</span>
-                  </span>
-                  <span className="text-[8px] text-indigo-300 font-extrabold">{availableBranches.length} Branches</span>
-                </div>
-                <select
-                  value={activeBranchId || 'all'}
-                  onChange={(e) => handleSelectActiveBranch(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-800 text-slate-200 text-xs font-bold rounded-xl px-3 py-2 outline-none focus:border-indigo-500 cursor-pointer"
-                >
-                  <option value="all">🌐 All Branches</option>
-                  {availableBranches.map((b: any) => (
-                    <option key={b.id} value={b.id}>
-                      📍 {b.name || b.firmName} {b.location ? `(${b.location})` : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
             {/* Navigation Tabs Links */}
-            <nav className="flex-1 px-4 py-6 space-y-2">
-              {(['dashboard', 'billing', 'inventory', 'customers', 'documents', 'reports', 'settings'] as const).map(tab => (
-                <button
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl transition-all cursor-pointer text-xs font-bold uppercase tracking-wider border ${
-                    activeTab === tab 
-                      ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20 font-black shadow-inner' 
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50 border-transparent'
-                  }`}
-                >
-                  {tab === 'dashboard' && <Home className="w-4 h-4 flex-shrink-0" />}
-                  {tab === 'billing' && (
-                    <div className="relative flex items-center gap-3 w-full">
-                      <ShoppingCart className="w-4 h-4 flex-shrink-0" />
-                      {cart.length > 0 && (
-                        <span className="absolute right-0 w-4 h-4 bg-rose-500 text-[8px] font-black justify-center items-center rounded-full text-white flex select-none">
-                          {cart.length}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                  {tab === 'inventory' && (
-                    <div className="relative flex items-center gap-3 w-full">
-                      <Package className="w-4 h-4 flex-shrink-0" />
-                      {lowStockCount > 0 && (
-                        <span className="absolute right-0 px-1.5 py-0.5 bg-amber-500 text-slate-950 text-[8px] font-black justify-center items-center rounded-full flex select-none animate-pulse">
-                          {lowStockCount} LOW
-                        </span>
-                      )}
-                    </div>
-                  )}
-                  {tab === 'customers' && <Users className="w-4 h-4 flex-shrink-0" />}
-                  {tab === 'documents' && <FileText className="w-4 h-4 flex-shrink-0" />}
-                  {tab === 'reports' && <BarChart3 className="w-4 h-4 flex-shrink-0" />}
-                  {tab === 'settings' && <SettingsIcon className="w-4 h-4 flex-shrink-0" />}
-                  
-                  <span className="truncate">{translate(tab, db?.settings?.language)}</span>
-                </button>
-              ))}
+            <nav className="flex-1 px-3 py-3.5 space-y-1">
+              {(['dashboard', 'billing', 'inventory', 'customers', 'documents', 'reports', 'settings'] as const).map(tab => {
+                const isActive = activeTab === tab;
+                return (
+                  <button
+                    key={tab}
+                    onClick={() => setActiveTab(tab)}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all cursor-pointer text-xs font-bold tracking-wide border ${
+                      isActive 
+                        ? 'bg-indigo-600/15 text-indigo-300 border-indigo-500/30 shadow-xs' 
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60 border-transparent'
+                    }`}
+                  >
+                    {tab === 'dashboard' && <Home className="w-4 h-4 shrink-0" />}
+                    {tab === 'billing' && <ShoppingCart className="w-4 h-4 shrink-0" />}
+                    {tab === 'inventory' && <Package className="w-4 h-4 shrink-0" />}
+                    {tab === 'customers' && <Users className="w-4 h-4 shrink-0" />}
+                    {tab === 'documents' && <FileText className="w-4 h-4 shrink-0" />}
+                    {tab === 'reports' && <BarChart3 className="w-4 h-4 shrink-0" />}
+                    {tab === 'settings' && <SettingsIcon className="w-4 h-4 shrink-0" />}
+                    
+                    <span className="truncate flex-1 text-left">{translate(tab, db?.settings?.language)}</span>
+
+                    {tab === 'billing' && cart.length > 0 && (
+                      <span className="px-1.5 py-0.5 bg-rose-500 text-[9px] font-black text-white rounded-full leading-none shrink-0 shadow-xs">
+                        {cart.length}
+                      </span>
+                    )}
+                    {tab === 'inventory' && lowStockCount > 0 && (
+                      <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[9px] font-bold rounded-full leading-none shrink-0">
+                        {lowStockCount}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
             </nav>
 
             {/* Sidebar Footer Operations */}
-            <div className="p-4 border-t border-slate-900/75 bg-slate-950">
-              <div className="flex items-center justify-around bg-slate-900/40 p-2 rounded-xl border border-slate-900/50">
+            <div className="p-3 border-t border-slate-900/80 bg-slate-950">
+              <div className="flex items-center justify-around bg-slate-900/40 p-1.5 rounded-xl border border-slate-900/60">
                 {/* Notification Button */}
                 <button
                   type="button"
                   onClick={() => setIsAlertsOpen(true)}
-                  className="relative w-8 h-8 flex items-center justify-center bg-slate-900 hover:bg-slate-850 text-slate-400 hover:text-slate-200 rounded-lg transition-all cursor-pointer"
+                  className="relative w-8 h-8 flex items-center justify-center bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded-lg transition-all cursor-pointer"
                   title="Alerts & Notifications"
                 >
                   <Bell className="w-4 h-4" />
                   {alertsCount > 0 && (
-                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-[8px] font-black text-white rounded-full flex items-center justify-center animate-bounce">
+                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-[8px] font-black text-white rounded-full flex items-center justify-center">
                       {alertsCount}
                     </span>
                   )}
@@ -3105,7 +3101,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setIsHistoryOpen(true)}
-                  className="w-8 h-8 flex items-center justify-center bg-slate-900 hover:bg-slate-850 text-slate-400 hover:text-slate-200 rounded-lg transition-all cursor-pointer"
+                  className="w-8 h-8 flex items-center justify-center bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded-lg transition-all cursor-pointer"
                   title="System Logs"
                 >
                   <History className="w-4 h-4" />
@@ -3115,7 +3111,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setIsCalculatorOpen(true)}
-                  className="w-8 h-8 flex items-center justify-center bg-slate-900 hover:bg-slate-850 text-slate-400 hover:text-slate-200 rounded-lg transition-all cursor-pointer"
+                  className="w-8 h-8 flex items-center justify-center bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded-lg transition-all cursor-pointer"
                   title="Calculator"
                 >
                   <Calculator className="w-4 h-4" />
@@ -3126,7 +3122,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={handleLogout}
-                    className="w-8 h-8 flex items-center justify-center bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-350 rounded-lg transition-all cursor-pointer animate-fade-in"
+                    className="w-8 h-8 flex items-center justify-center bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 rounded-lg transition-all cursor-pointer"
                     title="Sign Out"
                   >
                     <LogOut className="w-4 h-4" />
@@ -3137,7 +3133,7 @@ export default function App() {
           </aside>
 
           {/* Persistent global top status bar (MOBILE ONLY wide hide) */}
-          <header className="md:hidden fixed top-0 left-0 right-0 max-w-md mx-auto bg-slate-950/95 backdrop-blur-md border-b border-slate-900 text-slate-200 flex justify-between items-center px-4 py-2.5 z-40 select-none rounded-b-2xl shadow-lg">
+          <header className="md:hidden fixed top-0 left-0 right-0 w-full bg-slate-950/95 backdrop-blur-md border-b border-slate-900 text-slate-200 flex justify-between items-center px-4 py-2.5 z-40 select-none rounded-b-2xl shadow-lg">
             <div className="flex items-center min-w-0">
               {activeTab !== 'dashboard' && (
                 <button
@@ -3183,23 +3179,6 @@ export default function App() {
             </div>
             </div>
             <div className="flex items-center gap-1.5">
-              {/* Branch switcher in mobile header */}
-              {hasMultipleBranches && (
-                <select
-                  value={activeBranchId || 'all'}
-                  onChange={(e) => handleSelectActiveBranch(e.target.value)}
-                  className="bg-slate-900 border border-slate-800 text-indigo-300 text-[10px] font-black rounded-lg px-2 py-1 outline-none max-w-[100px] truncate cursor-pointer"
-                  title="Switch Branch"
-                >
-                  <option value="all">🌐 All</option>
-                  {availableBranches.map((b: any) => (
-                    <option key={b.id} value={b.id}>
-                      📍 {b.name || b.firmName}
-                    </option>
-                  ))}
-                </select>
-              )}
-
               {/* Notification button */}
               <button
                 type="button"
@@ -3250,7 +3229,7 @@ export default function App() {
           </header>
 
           {/* Main Stage tabs renders - responsive width */}
-          <main className="flex-1 w-full p-4 pt-16 md:pt-6 md:pl-72 md:pr-6 max-w-7xl mx-auto transition-all min-h-screen">
+          <main className="flex-1 w-full max-w-full p-4 pt-16 md:pt-6 md:pl-72 md:pr-6 max-w-7xl mx-auto transition-all min-h-screen min-w-0 overflow-x-hidden">
             {activeTab === 'dashboard' && (
               <DashboardView 
                 db={branchFilteredDb || db}
@@ -3453,44 +3432,46 @@ export default function App() {
           {/* ════════════════════════════════════════
               TABS BOTTOM NAVIGATION DOCK (MOBILE ONLY wide hide)
               ════════════════════════════════════════ */}
-          <nav className="md:hidden fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-slate-950/95 backdrop-blur-md border-t border-slate-900 flex justify-between items-center px-1 py-1 z-40 shadow-2xl pb-5 rounded-t-3xl flex-nowrap overflow-hidden">
-            {(['dashboard', 'billing', 'inventory', 'customers', 'documents', 'reports', 'settings'] as const).map(tab => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`flex flex-col items-center gap-1 py-1.5 px-1 xs:px-2 rounded-2xl transition-all cursor-pointer relative min-w-0 flex-1 border ${
-                  activeTab === tab ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/15' : 'text-slate-500 hover:text-slate-300 border-transparent'
-                }`}
-              >
-                {tab === 'dashboard' && <Home className="w-4 h-4" />}
-                {tab === 'billing' && (
-                  <>
-                    <ShoppingCart className="w-4 h-4" />
-                    {cart.length > 0 && (
-                      <span className="absolute -top-1 right-1 w-3.5 h-3.5 bg-rose-500 text-[8px] font-black justify-center items-center rounded-full text-white flex select-none">
+          <nav className="md:hidden fixed bottom-0 left-0 right-0 w-full bg-slate-950/95 backdrop-blur-lg border-t border-slate-900 flex items-center justify-around px-1 py-1 z-40 shadow-2xl pb-4">
+            {(['dashboard', 'billing', 'inventory', 'customers', 'documents', 'reports', 'settings'] as const).map(tab => {
+              const isActive = activeTab === tab;
+              return (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`flex flex-col items-center justify-center gap-1 py-1.5 px-1 rounded-xl transition-all cursor-pointer relative min-w-0 flex-1 ${
+                    isActive 
+                      ? 'text-indigo-400 font-bold bg-indigo-500/10' 
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <div className="relative">
+                    {tab === 'dashboard' && <Home className="w-4 h-4" />}
+                    {tab === 'billing' && <ShoppingCart className="w-4 h-4" />}
+                    {tab === 'inventory' && <Package className="w-4 h-4" />}
+                    {tab === 'customers' && <Users className="w-4 h-4" />}
+                    {tab === 'documents' && <FileText className="w-4 h-4" />}
+                    {tab === 'reports' && <BarChart3 className="w-4 h-4" />}
+                    {tab === 'settings' && <SettingsIcon className="w-4 h-4" />}
+
+                    {tab === 'billing' && cart.length > 0 && (
+                      <span className="absolute -top-1.5 -right-2.5 min-w-[14px] h-3.5 px-0.5 bg-rose-500 text-[8px] font-black justify-center items-center rounded-full text-white flex select-none shadow-xs">
                         {cart.length}
                       </span>
                     )}
-                  </>
-                )}
-                {tab === 'inventory' && (
-                  <>
-                    <Package className="w-4 h-4" />
-                    {lowStockCount > 0 && (
-                      <span className="absolute -top-1 right-1 h-3.5 px-1 bg-amber-500 text-slate-950 text-[8px] font-black flex items-center justify-center rounded-full select-none animate-pulse">
+                    {tab === 'inventory' && lowStockCount > 0 && (
+                      <span className="absolute -top-1.5 -right-2 min-w-[13px] h-3.5 px-0.5 bg-amber-500 text-slate-950 text-[8px] font-black flex items-center justify-center rounded-full select-none">
                         {lowStockCount}
                       </span>
                     )}
-                  </>
-                )}
-                {tab === 'customers' && <Users className="w-4 h-4" />}
-                {tab === 'documents' && <FileText className="w-4 h-4" />}
-                {tab === 'reports' && <BarChart3 className="w-4 h-4" />}
-                {tab === 'settings' && <SettingsIcon className="w-4 h-4" />}
-                
-                <span className="text-[8px] xs:text-[9px] font-black uppercase tracking-tight scale-95 truncate max-w-full">{translate(tab, db?.settings?.language)}</span>
-              </button>
-            ))}
+                  </div>
+                  
+                  <span className="text-[9px] tracking-tight truncate max-w-full leading-none">
+                    {translate(tab, db?.settings?.language)}
+                  </span>
+                </button>
+              );
+            })}
           </nav>
 
           {/* ════════════════════════════════════════
@@ -3583,6 +3564,7 @@ export default function App() {
                   products={db.products} 
                   shopName={db.settings.shopName}
                   fssai={db.settings.fssai}
+                  settings={db.settings}
                   initialProductId={labelGeneratorProductId}
                   initialProductIds={labelGeneratorProductIds}
                   onClose={() => {
@@ -4039,12 +4021,13 @@ export default function App() {
               }}
             >
               <div 
-                className="w-full max-w-sm my-auto"
+                className="w-full max-w-lg md:max-w-xl my-auto transition-all"
                 onClick={(e) => e.stopPropagation()}
               >
                 <ReceiptView 
                   sale={activeReceiptSale}
                   settings={db.settings}
+                  onUpdateSettings={handleSaveShopInfo}
                   onClose={() => {
                     setIsReceiptOpen(false);
                     setActiveReceiptSale(null);

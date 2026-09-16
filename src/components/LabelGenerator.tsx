@@ -7,7 +7,7 @@ import React, { useEffect, useRef } from 'react';
 import JsBarcode from 'jsbarcode';
 import { jsPDF } from 'jspdf';
 import { Printer, X, Tag, Sparkles, Plus, Trash, FileDown, Loader2 } from 'lucide-react';
-import { Product } from '../types';
+import { Product, Settings } from '../types';
 import { formatCurrency, formatDate } from '../utils';
 import { useDialog } from '../context/DialogContext';
 import { savePdfToAppFolder, isNativeCapacitor } from '../services/nativeStorage';
@@ -16,6 +16,7 @@ interface LabelGeneratorProps {
   products: Product[];
   shopName: string;
   fssai?: string;
+  settings?: Settings;
   onClose: () => void;
   initialProductId?: string | null;
   initialProductIds?: string[] | null;
@@ -27,6 +28,35 @@ const A4_PRESETS = {
   '4x10': { name: '4 x 10 Grid (40 Labels, 48.5x25.4mm)', cols: 4, rows: 10, margin: 8, gap: 1.5, fontSize: '7.5pt', barcodeHeight: 14 },
   '5x13': { name: '5 x 13 Grid (65 Labels, 38.1x21.2mm)', cols: 5, rows: 13, margin: 7, gap: 1, fontSize: '6.5pt', barcodeHeight: 10 },
 };
+
+export type ShopNameFontKey = 'serif-bold' | 'serif-italic' | 'sans-bold' | 'sans-black' | 'mono-bold';
+export type ShopNameColorKey = 'indigo' | 'crimson' | 'emerald' | 'purple' | 'bronze' | 'charcoal' | 'black';
+
+export interface ShopNameColorOption {
+  id: ShopNameColorKey;
+  label: string;
+  hex: string;
+  rgb: [number, number, number];
+  bgClass: string;
+}
+
+export const SHOP_NAME_COLORS: Record<ShopNameColorKey, ShopNameColorOption> = {
+  indigo: { id: 'indigo', label: 'Royal Indigo', hex: '#3730a3', rgb: [55, 48, 163], bgClass: 'bg-indigo-700' },
+  crimson: { id: 'crimson', label: 'Deep Crimson', hex: '#991b1b', rgb: [153, 27, 27], bgClass: 'bg-red-800' },
+  emerald: { id: 'emerald', label: 'Emerald Green', hex: '#065f46', rgb: [6, 95, 70], bgClass: 'bg-emerald-800' },
+  purple: { id: 'purple', label: 'Imperial Purple', hex: '#6b21a8', rgb: [107, 33, 168], bgClass: 'bg-purple-800' },
+  bronze: { id: 'bronze', label: 'Warm Bronze', hex: '#92400e', rgb: [146, 64, 14], bgClass: 'bg-amber-800' },
+  charcoal: { id: 'charcoal', label: 'Deep Charcoal', hex: '#1e293b', rgb: [30, 41, 59], bgClass: 'bg-slate-800' },
+  black: { id: 'black', label: 'Classic Black', hex: '#000000', rgb: [0, 0, 0], bgClass: 'bg-black' },
+};
+
+export const SHOP_NAME_FONTS = [
+  { id: 'serif-bold' as ShopNameFontKey, label: 'Classic Serif', preview: 'Times Serif', pdfFont: 'times', pdfStyle: 'bold', cssClass: 'font-serif font-bold tracking-normal' },
+  { id: 'serif-italic' as ShopNameFontKey, label: 'Italic Serif', preview: 'Times Italic', pdfFont: 'times', pdfStyle: 'bolditalic', cssClass: 'font-serif italic font-bold tracking-normal' },
+  { id: 'sans-bold' as ShopNameFontKey, label: 'Modern Sans', preview: 'Helvetica Sans', pdfFont: 'helvetica', pdfStyle: 'bold', cssClass: 'font-sans font-bold tracking-wider' },
+  { id: 'sans-black' as ShopNameFontKey, label: 'Heavy Display', preview: 'Impact Heavy', pdfFont: 'helvetica', pdfStyle: 'bold', cssClass: 'font-sans font-black tracking-widest' },
+  { id: 'mono-bold' as ShopNameFontKey, label: 'Typewriter Mono', preview: 'Courier Mono', pdfFont: 'courier', pdfStyle: 'bold', cssClass: 'font-mono font-bold tracking-tight' },
+];
 
 const generateBarcodeOnCanvas = (canvas: HTMLCanvasElement, value: string, options: any) => {
   const cleanValue = value.trim();
@@ -115,6 +145,7 @@ export const LabelGenerator: React.FC<LabelGeneratorProps> = ({
   products,
   shopName,
   fssai,
+  settings,
   onClose,
   initialProductId = null,
   initialProductIds = null,
@@ -126,7 +157,33 @@ export const LabelGenerator: React.FC<LabelGeneratorProps> = ({
   const [size, setSize] = React.useState<'sm' | 'md' | 'lg'>('md');
   const [showPrice, setShowPrice] = React.useState<boolean>(true);
   const [showMrp, setShowMrp] = React.useState<boolean>(true);
-  const [showShopName, setShowShopName] = React.useState<boolean>(false);
+  const [showShopName, setShowShopName] = React.useState<boolean>(() => {
+    const saved = localStorage.getItem('shoppos_label_show_shop_name');
+    return saved !== null ? saved === 'true' : true;
+  });
+
+  const shopNameFont: ShopNameFontKey = 
+    settings?.barcodeLabelShopNameFont || 
+    (localStorage.getItem('shoppos_label_shop_font') as ShopNameFontKey) || 
+    'serif-bold';
+
+  const shopNameColor: ShopNameColorKey = 
+    settings?.barcodeLabelShopNameColor || 
+    (localStorage.getItem('shoppos_label_shop_color') as ShopNameColorKey) || 
+    'indigo';
+
+  const handleToggleShopName = (val: boolean) => {
+    setShowShopName(val);
+    localStorage.setItem('shoppos_label_show_shop_name', String(val));
+  };
+
+  const activeShopFont = React.useMemo(() => {
+    return SHOP_NAME_FONTS.find(f => f.id === shopNameFont) || SHOP_NAME_FONTS[0];
+  }, [shopNameFont]);
+
+  const activeShopColor = React.useMemo(() => {
+    return SHOP_NAME_COLORS[shopNameColor] || SHOP_NAME_COLORS.indigo;
+  }, [shopNameColor]);
   const [showFssai, setShowFssai] = React.useState<boolean>(false);
   const [showExpiry, setShowExpiry] = React.useState<boolean>(false);
   const [showPackingDate, setShowPackingDate] = React.useState<boolean>(false);
@@ -331,9 +388,9 @@ export const LabelGenerator: React.FC<LabelGeneratorProps> = ({
 
           // 1. Shop Name
           if (showShopName && shopName) {
-            doc.setFont('helvetica', 'bold');
+            doc.setFont(activeShopFont.pdfFont as any, activeShopFont.pdfStyle as any);
             doc.setFontSize(d.titleSize);
-            doc.setTextColor(30, 30, 30);
+            doc.setTextColor(activeShopColor.rgb[0], activeShopColor.rgb[1], activeShopColor.rgb[2]);
             const shopLines = doc.splitTextToSize(shopName.toUpperCase(), d.w - 4);
             doc.text(shopLines[0], d.w / 2, currY, { align: 'center' });
             currY += 2.8;
@@ -472,9 +529,9 @@ export const LabelGenerator: React.FC<LabelGeneratorProps> = ({
 
               // 1. Shop Name
               if (showShopName && shopName) {
-                doc.setFont('helvetica', 'bold');
+                doc.setFont(activeShopFont.pdfFont as any, activeShopFont.pdfStyle as any);
                 doc.setFontSize(preset.cols === 3 ? 7 : preset.cols === 4 ? 6 : 5);
-                doc.setTextColor(30, 30, 30);
+                doc.setTextColor(activeShopColor.rgb[0], activeShopColor.rgb[1], activeShopColor.rgb[2]);
                 const shopLines = doc.splitTextToSize(shopName.toUpperCase(), cellWidth - 2);
                 doc.text(shopLines[0], x + cellWidth / 2, currY, { align: 'center' });
                 currY += (preset.cols === 3 ? 2.8 : 2.2);
@@ -953,7 +1010,7 @@ export const LabelGenerator: React.FC<LabelGeneratorProps> = ({
                   <input
                     type="checkbox"
                     checked={showShopName}
-                    onChange={(e) => setShowShopName(e.target.checked)}
+                    onChange={(e) => handleToggleShopName(e.target.checked)}
                     className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4"
                   />
                   Show Shop Name
@@ -1054,7 +1111,10 @@ export const LabelGenerator: React.FC<LabelGeneratorProps> = ({
                               }}
                             >
                               {showShopName && shopName && (
-                                <div className="text-[7px] font-black text-slate-500 block truncate w-full text-center uppercase leading-none">
+                                <div 
+                                  className={`text-[7.5px] block truncate w-full text-center uppercase leading-none ${activeShopFont.cssClass}`}
+                                  style={{ color: activeShopColor.hex }}
+                                >
                                   {shopName}
                                 </div>
                               )}
@@ -1161,7 +1221,10 @@ export const LabelGenerator: React.FC<LabelGeneratorProps> = ({
                                   return (
                                     <div className="flex flex-col items-center justify-center h-full w-full pointer-events-none py-0.5">
                                       {showShopName && shopName && (
-                                        <div className="text-[4px] font-extrabold tracking-tighter truncate w-full text-center uppercase text-slate-500 scale-[0.9] leading-none mb-0.5">
+                                        <div 
+                                          className={`text-[4px] tracking-tighter truncate w-full text-center uppercase scale-[0.9] leading-none mb-0.5 ${activeShopFont.cssClass}`}
+                                          style={{ color: activeShopColor.hex }}
+                                        >
                                           {shopName}
                                         </div>
                                       )}

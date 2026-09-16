@@ -332,25 +332,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       case 'alerts_banners':
         if (alertsCount === 0 && outstandingCredit === 0) return null;
         return (
-          <div key={widget.id} className="space-y-2.5 animate-fade-in">
+          <div key={widget.id} className="space-y-2 animate-fade-in">
             {alertsCount > 0 && (
               <button
                 type="button"
                 onClick={onOpenAlerts}
-                className="flex items-center gap-3 bg-red-500/5 dark:bg-red-500/10 border border-red-500/20 rounded-2xl p-4 text-left hover:bg-red-500/10 dark:hover:bg-red-500/15 transition-all w-full cursor-pointer group shadow-sm"
+                className="flex items-center gap-3 bg-rose-50/80 dark:bg-rose-950/30 border border-rose-200/70 dark:border-rose-900/50 rounded-2xl p-3.5 text-left hover:bg-rose-100/70 dark:hover:bg-rose-950/50 transition-all w-full cursor-pointer group shadow-2xs"
               >
-                <div className="w-9 h-9 rounded-xl bg-red-500/10 dark:bg-red-500/20 flex items-center justify-center text-red-600 dark:text-red-400 flex-shrink-0 animate-pulse">
-                  <AlertCircle className="w-5 h-5" />
+                <div className="w-8 h-8 rounded-xl bg-rose-500/15 dark:bg-rose-500/20 flex items-center justify-center text-rose-600 dark:text-rose-400 shrink-0">
+                  <AlertCircle className="w-4 h-4" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <h4 className="text-xs font-extrabold text-red-950 dark:text-red-200 flex items-center gap-1.5">
+                  <h4 className="text-xs font-bold text-rose-900 dark:text-rose-200 flex items-center gap-1.5">
                     <span>{alertsCount} Stock & Expiry Alert{alertsCount > 1 ? 's' : ''} Pending</span>
                   </h4>
-                  <p className="text-[10px] text-red-700/80 dark:text-red-300/80 font-medium mt-0.5">
-                    Products have depleted or are expiring shortly. Restock directly now.
+                  <p className="text-[11px] text-rose-700/80 dark:text-rose-300/80 font-normal mt-0.5">
+                    Products have depleted or are expiring shortly. Click to review.
                   </p>
                 </div>
-                <ArrowUpRight className="w-4 h-4 text-red-550 dark:text-red-400 ml-auto group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+                <ArrowUpRight className="w-4 h-4 text-rose-500 dark:text-rose-400 ml-auto group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
               </button>
             )}
 
@@ -358,16 +358,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <button
                 type="button"
                 onClick={() => onNavigate('customers')}
-                className="flex items-center gap-3 bg-amber-500/5 dark:bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 text-left hover:bg-amber-500/10 dark:hover:bg-amber-500/15 transition-all w-full cursor-pointer group shadow-sm"
+                className="flex items-center gap-3 bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200/70 dark:border-amber-900/50 rounded-2xl p-3.5 text-left hover:bg-amber-100/70 dark:hover:bg-amber-950/50 transition-all w-full cursor-pointer group shadow-2xs"
               >
-                <div className="w-9 h-9 rounded-xl bg-amber-500/10 dark:bg-amber-500/20 flex items-center justify-center text-amber-700 dark:text-amber-400 flex-shrink-0">
+                <div className="w-8 h-8 rounded-xl bg-amber-500/15 dark:bg-amber-500/20 flex items-center justify-center text-amber-700 dark:text-amber-400 shrink-0">
                   <Users className="w-4 h-4" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <h4 className="text-xs font-extrabold text-amber-950 dark:text-amber-200">
+                  <h4 className="text-xs font-bold text-amber-900 dark:text-amber-200">
                     {settings.currency || 'Rs.'}{formatCurrency(outstandingCredit)} Outstanding Credit
                   </h4>
-                  <p className="text-[10px] text-amber-700/80 dark:text-amber-300/80 font-medium mt-0.5">
+                  <p className="text-[11px] text-amber-700/80 dark:text-amber-300/80 font-normal mt-0.5">
                     Awaiting payment balances over {pendingCreditsCount} customer accounts.
                   </p>
                 </div>
@@ -381,7 +381,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         return (
           <div key={widget.id} className="space-y-2.5 animate-fade-in">
             <div className="flex items-center justify-between px-0.5">
-              <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-wider flex items-center gap-1.5 select-none">
+              <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5 select-none">
                 <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
                 Live Revenue & Margins
               </span>
@@ -403,47 +403,41 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3.5">
-              <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-100 dark:border-slate-800/80 shadow-[0_1px_3px_rgba(0,0,0,0.02),0_4px_12px_rgba(0,0,0,0.02)] relative overflow-hidden group hover:border-slate-200 dark:hover:border-slate-700 transition-all">
-                <div className="text-[9px] font-extrabold text-slate-400 dark:text-slate-500 uppercase tracking-widest flex items-center gap-1.5 select-none">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs relative overflow-hidden group hover:border-slate-300 dark:hover:border-slate-700 transition-all">
+                <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5 select-none">
                   <TrendingUp className="w-3 h-3 text-emerald-500" />
                   {t('sales_summary')}
                 </div>
-                <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-slate-100 mt-1 tracking-tight">
+                <h3 className="text-base sm:text-xl font-black text-slate-900 dark:text-slate-100 mt-1 tracking-tight">
                   {settings.currency || 'Rs.'}{formatCurrency(totalRevenue)}
                 </h3>
-                <p className="text-[9px] font-bold text-slate-400 dark:text-slate-500 mt-0.5">
-                  {filteredSales.length} closed bill{filteredSales.length === 1 ? '' : 's'} {summaryPeriod === 'today' ? 'today' : `(${summaryPeriod})`}
+                <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400 mt-1">
+                  {filteredSales.length} bill{filteredSales.length === 1 ? '' : 's'} {summaryPeriod === 'today' ? 'today' : `(${summaryPeriod})`}
                 </p>
-                <div className="absolute right-3 bottom-3 text-2xl opacity-15 dark:opacity-10 group-hover:scale-110 transition-transform duration-300 pointer-events-none select-none">
-                  💵
-                </div>
               </div>
 
-              <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-100 dark:border-slate-800/80 shadow-[0_1px_3px_rgba(0,0,0,0.02),0_4px_12px_rgba(0,0,0,0.02)] relative overflow-hidden group hover:border-slate-200 dark:hover:border-slate-700 transition-all">
-                <div className="text-[9px] font-extrabold text-slate-400 dark:text-slate-500 uppercase tracking-widest flex items-center gap-1.5 select-none">
+              <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs relative overflow-hidden group hover:border-slate-300 dark:hover:border-slate-700 transition-all">
+                <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5 select-none">
                   <Home className="w-3 h-3 text-indigo-500" />
                   {t('profit')}
                 </div>
                 <h3
-                  className={`text-base sm:text-lg font-black mt-1 tracking-tight ${
-                    netProfit >= 0 ? 'text-emerald-555 dark:text-emerald-400' : 'text-rose-500'
+                  className={`text-base sm:text-xl font-black mt-1 tracking-tight ${
+                    netProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'
                   }`}
                 >
                   {settings.currency || 'Rs.'}{formatCurrency(netProfit)}
                 </h3>
                 {totalExpenses > 0 ? (
-                  <p className="text-[9px] font-bold text-rose-500 dark:text-rose-400 mt-0.5">
-                    Gross: {settings.currency || 'Rs.'}{formatCurrency(grossProfit)} • Exp: {settings.currency || 'Rs.'}{formatCurrency(totalExpenses)}
+                  <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400 mt-1 truncate">
+                    Gross {settings.currency || 'Rs.'}{formatCurrency(grossProfit)} • Exp {settings.currency || 'Rs.'}{formatCurrency(totalExpenses)}
                   </p>
                 ) : (
-                  <p className="text-[9px] font-bold text-slate-400 dark:text-slate-500 mt-0.5">
-                    {totalRevenue > 0 ? `${((netProfit / totalRevenue) * 100).toFixed(1)}% net margin` : 'Net profit balance'}
+                  <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400 mt-1">
+                    {totalRevenue > 0 ? `${((netProfit / totalRevenue) * 100).toFixed(1)}% margin` : 'Profit balance'}
                   </p>
                 )}
-                <div className="absolute right-3 bottom-3 text-2xl opacity-15 dark:opacity-10 group-hover:scale-110 transition-transform duration-300 pointer-events-none select-none">
-                  📈
-                </div>
               </div>
             </div>
           </div>

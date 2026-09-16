@@ -231,7 +231,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   };
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3 w-full max-w-full overflow-x-hidden">
       {/* Reports Header */}
       <div className="flex justify-between items-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 shadow-xs select-none">
         <div className="flex items-center gap-1.5">
@@ -250,7 +250,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       </div>
 
       {/* Date filters tabs bar */}
-      <div className="flex gap-1 overflow-x-auto pb-1 select-none scrollbar-none">
+      <div className="flex flex-wrap gap-1.5 pb-1 select-none">
         {(['today', 'week', 'month', 'year', 'all', 'daily'] as const).map(p => (
           <button
             key={p}

@@ -165,7 +165,7 @@ export const AppGuideModal: React.FC<AppGuideModalProps> = ({
         </div>
 
         {/* Navigation Tabs Bar */}
-        <div className="flex items-center gap-1.5 p-2 px-4 bg-slate-950/40 border-b border-slate-800 overflow-x-auto scrollbar-none">
+        <div className="flex flex-wrap items-center gap-1.5 p-2 px-4 bg-slate-950/40 border-b border-slate-800">
           {guideTabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;

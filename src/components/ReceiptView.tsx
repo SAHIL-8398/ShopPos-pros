@@ -6,7 +6,7 @@
 import React from 'react';
 import { jsPDF } from 'jspdf';
 import JsBarcode from 'jsbarcode';
-import { Share2, FileDown, MessageCircle, RefreshCw, X, Check, FolderCheck, Printer, Bluetooth } from 'lucide-react';
+import { Share2, FileDown, MessageCircle, RefreshCw, X, Check, FolderCheck, Printer, Bluetooth, Star, FileText } from 'lucide-react';
 import { Sale, Settings } from '../types';
 import { formatCurrency, copyToClipboard, formatDate, generateUpiQrDataUrl, getPdfCurrency } from '../utils';
 import { useDialog } from '../context/DialogContext';
@@ -14,6 +14,9 @@ import { savePdfToAppFolder, isNativeCapacitor } from '../services/nativeStorage
 import { printPdfDocument, sharePdfDocument, printThermalReceipt } from '../services/printService';
 import { printReceiptViaBluetooth, scanAndConnectPrinter, isBluetoothAvailable, getConnectedPrinterInfo } from '../services/bluetoothPrinterService';
 import { Share } from '@capacitor/share';
+import { BillFormatKey, BILL_FORMATS, getBillFormatConfig } from '../constants/billFormats';
+import { generateInvoicePdfDoc } from '../services/invoicePdfService';
+import { FormattedInvoiceView } from './FormattedInvoiceView';
 
 const getBarcodeDataURL = (text: string): string => {
   const canvas = document.createElement('canvas');
@@ -86,6 +89,7 @@ interface ReceiptViewProps {
   onClose: () => void;
   onNewBill?: () => void;
   showNewBillButton?: boolean;
+  onUpdateSettings?: (info: Partial<Settings>) => Promise<void> | void;
 }
 
 export function buildReceiptText(sale: Sale, settings: Settings): string {
@@ -238,12 +242,21 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
   settings,
   onClose,
   onNewBill,
-  showNewBillButton = true
+  showNewBillButton = true,
+  onUpdateSettings
 }) => {
   const { showAlert } = useDialog();
   const [copied, setCopied] = React.useState(false);
   const [paperSize, setPaperSize] = React.useState<'58mm' | '80mm'>(settings.preferredReceiptPaperSize || '58mm');
   const [isPrintingThermal, setIsPrintingThermal] = React.useState(false);
+  const [billFormat, setBillFormat] = React.useState<BillFormatKey>(settings.billFormat || 'regular');
+  const [viewMode, setViewMode] = React.useState<'formatted' | 'rawText'>('formatted');
+  const [isSavingFormatDefault, setIsSavingFormatDefault] = React.useState(false);
+  const [savedDefaultNotice, setSavedDefaultNotice] = React.useState(false);
+  const [barcodeDataUrl, setBarcodeDataUrl] = React.useState<string>('');
+  const [upiQrDataUrl, setUpiQrDataUrl] = React.useState<string>('');
+
+  const activeFormatConfig = React.useMemo(() => getBillFormatConfig(billFormat), [billFormat]);
   const receiptText = buildReceiptText(sale, settings);
   const barcodeRef = React.useRef<HTMLCanvasElement>(null);
 
@@ -260,11 +273,40 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
           background: '#ffffff',
           lineColor: '#000000'
         });
+        setBarcodeDataUrl(barcodeRef.current.toDataURL('image/png'));
       } catch (err) {
         console.warn('Bill barcode render error:', err);
       }
     }
   }, [sale.billNo]);
+
+  React.useEffect(() => {
+    let isMounted = true;
+    if (settings.upi) {
+      loadQrCode(settings.upi, settings.shopName || 'ShopPOS Store', sale.total).then(url => {
+        if (isMounted && url) {
+          setUpiQrDataUrl(url);
+        }
+      });
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [settings.upi, settings.shopName, sale.total]);
+
+  const handleSaveAsDefault = async () => {
+    if (!onUpdateSettings) return;
+    setIsSavingFormatDefault(true);
+    try {
+      await onUpdateSettings({ billFormat });
+      setSavedDefaultNotice(true);
+      setTimeout(() => setSavedDefaultNotice(false), 2500);
+    } catch (e: any) {
+      showAlert(`Could not save format default: ${e?.message || e}`, 'Settings');
+    } finally {
+      setIsSavingFormatDefault(false);
+    }
+  };
 
   // Keyboard shortcut Ctrl+P / Cmd+P to trigger Thermal Receipt print
   React.useEffect(() => {
@@ -437,375 +479,8 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
     return doc;
   };
 
-  const generateA4PDFDoc = async (): Promise<jsPDF> => {
-    const doc = new jsPDF({
-      orientation: 'p',
-      unit: 'mm',
-      format: 'a4',
-      compress: true
-    });
-
-    // Professional Invoice Theme Colors (Slate + Indigo Accents)
-    const primaryColor = [79, 70, 229];   // Indigo-600
-    const darkColor = [15, 23, 42];       // Slate-900
-    const lightColor = [248, 250, 252];   // Slate-50
-    const borderColor = [226, 232, 240];  // Slate-200
-    const mutColor = [100, 116, 139];     // Slate-500
-
-    // Document details setting (Non-editable, digitally secured metadata properties)
-    doc.setProperties({
-      title: `Secured Tax Invoice - Bill #${sale.billNo}`,
-      subject: `Original Digitally Secured Invoice #${sale.billNo} - Non-editable Copy`,
-      author: settings.shopName || 'ShopPOS Store',
-      creator: 'ShopPOS billing engine',
-      keywords: 'invoice, non-editable, locked, secured, authentic'
-    });
-
-    // --- PAGE TOP DESIGN MATCH ---
-    // Primary Indigo Colored Header Strip
-    doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-    doc.rect(0, 0, 210, 8, 'F');
-
-    // --- BUSINESS DETAIL BLOCK (Left Column) ---
-    doc.setTextColor(darkColor[0], darkColor[1], darkColor[2]);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(22);
-    
-    let headerY = 27;
-    if (settings.showShopNameOnBill !== false) {
-      const nameText = settings.shopName || 'ShopPOS Store';
-      const shopLines = doc.splitTextToSize(nameText, 110);
-      shopLines.forEach((l: string, i: number) => {
-        doc.text(l, 15, 22 + i * 5.5);
-      });
-      headerY = 22 + shopLines.length * 5.5 + 1.5;
-    } else {
-      doc.text('INVOICE / RECEIPT', 15, 22);
-      headerY = 27;
-    }
-
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9);
-    doc.setTextColor(mutColor[0], mutColor[1], mutColor[2]);
-
-    if (settings.showAddressOnBill !== false && settings.address) {
-      const rawLines = settings.address.split('\n');
-      rawLines.forEach((rl: string) => {
-        const addressLines = doc.splitTextToSize(rl, 110);
-        addressLines.forEach((l: string) => {
-          doc.text(l, 15, headerY);
-          headerY += 4.5;
-        });
-      });
-    }
-    if (settings.showPhoneOnBill !== false && settings.phone) {
-      doc.text(`Phone: ${settings.phone}`, 15, headerY);
-      headerY += 4.5;
-    }
-    if (settings.showGstinOnBill !== false && settings.gstin) {
-      doc.text(`GSTIN: ${settings.gstin}`, 15, headerY);
-      headerY += 4.5;
-    }
-    if (settings.showFssaiOnBill !== false && settings.fssai) {
-      doc.text(`FSSAI Lic. No: ${settings.fssai}`, 15, headerY);
-      headerY += 4.5;
-    }
-
-    // --- INVOICE HEADER BLOCK (Right Column) ---
-    doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(24);
-    doc.text('TAX INVOICE', 195, 22, { align: 'right' });
-
-    doc.setFontSize(9.5);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(darkColor[0], darkColor[1], darkColor[2]);
-    doc.text(`Invoice No: #${sale.billNo}`, 195, 28, { align: 'right' });
-    if (settings.showDateOnBill !== false) {
-      doc.text(`Date & Time: ${formatDate(sale.date)} ${sale.time || ''}`, 195, 33, { align: 'right' });
-    }
-    if (sale.paymentMethod === 'split') {
-      const split = sale.splitDetails || { cashAmount: 0, upiAmount: 0 };
-      doc.text(`Payment Mode: SPLIT (Cash: Rs.${split.cashAmount} / UPI: Rs.${split.upiAmount})`, 195, 38, { align: 'right' });
-    } else {
-      doc.text(`Payment Mode: ${(sale.paymentMethod || 'cash').toUpperCase()}`, 195, 38, { align: 'right' });
-    }
-
-    // Visual Lock Security Badge
-    doc.setFillColor(240, 253, 244); // light green bg
-    doc.setDrawColor(187, 247, 208); // green-200 border
-    doc.rect(145, 40, 50, 4.2, 'F');
-    doc.rect(145, 40, 50, 4.2, 'S');
-    doc.setTextColor(21, 128, 61); // green-700
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(6.5);
-    doc.text('SECURED ORIGINAL (READ-ONLY)', 170, 43, { align: 'center' });
-
-    // Horizontal separator line
-    doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2]);
-    doc.setLineWidth(0.4);
-    doc.line(15, 45, 195, 45);
-
-    // --- BILLING / CUSTOMER & CASHIER DETAILS GRID ---
-    // Background box for nice structure
-    doc.setFillColor(lightColor[0], lightColor[1], lightColor[2]);
-    doc.rect(15, 50, 180, 26, 'F');
-    doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2]);
-    doc.rect(15, 50, 180, 26, 'S');
-
-    // Col 1: Billed To Customer
-    if (settings.showCustomerOnBill !== false) {
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8);
-      doc.setTextColor(mutColor[0], mutColor[1], mutColor[2]);
-      doc.text('BILLED TO CLIENT', 20, 55);
-
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(10.5);
-      doc.setTextColor(darkColor[0], darkColor[1], darkColor[2]);
-      doc.text(sale.customer || 'Walk-In Customer / Guest', 20, 60.5);
-
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(8.5);
-      doc.setTextColor(mutColor[0], mutColor[1], mutColor[2]);
-      
-      let custDetails = '';
-      if (sale.customerPhone) custDetails += `Mobile: ${sale.customerPhone}`;
-      if (sale.customerAddress) {
-        if (custDetails) custDetails += '  |  ';
-        custDetails += `Addr: ${sale.customerAddress}`;
-      }
-      doc.text(custDetails || 'No customer registration details recorded.', 20, 66);
-    } else {
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8);
-      doc.setTextColor(mutColor[0], mutColor[1], mutColor[2]);
-      doc.text('BILLED TO CLIENT', 20, 55);
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(10);
-      doc.setTextColor(darkColor[0], darkColor[1], darkColor[2]);
-      doc.text('Walk-In Customer / Guest', 20, 61);
-    }
-
-    // Col 2: Billing Operator Details
-    if (settings.showStaffOnBill !== false) {
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8);
-      doc.setTextColor(mutColor[0], mutColor[1], mutColor[2]);
-      doc.text('INVOICE META', 125, 55);
-
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(8.5);
-      doc.setTextColor(darkColor[0], darkColor[1], darkColor[2]);
-      doc.text(`Handled By: ${sale.staffName || 'Operator'}`, 125, 60.5);
-      doc.text(`Invoice Status: ${sale.voided ? 'VOIDED/CANCELLED' : sale.paymentMethod === 'credit' && !sale.creditPaid ? 'CREDIT - UNPAID' : 'PAID / SETTLED'}`, 125, 66);
-    }
-
-    // --- MAIN TRANSACTION ITEMS TABLE ---
-    let y = 84;
-
-    // Draw table header block
-    doc.setFillColor(darkColor[0], darkColor[1], darkColor[2]);
-    doc.rect(15, y, 180, 8, 'F');
-
-    doc.setTextColor(255, 255, 255);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8.5);
-    doc.text('S.No', 21, y + 5.5, { align: 'center' });
-    doc.text('Items & Services Ordered', 27, y + 5.5);
-    doc.text('Qty', 115, y + 5.5, { align: 'right' });
-    doc.text('Unit Price', 150, y + 5.5, { align: 'right' });
-    doc.text('Total (INR)', 190, y + 5.5, { align: 'right' });
-
-    y += 8;
-
-    // Table rows mapping
-    doc.setFontSize(9);
-    sale.items.forEach((item, index) => {
-      // Draw even alternate background color
-      if (index % 2 === 1) {
-        doc.setFillColor(lightColor[0], lightColor[1], lightColor[2]);
-        doc.rect(15, y, 180, 8, 'F');
-      }
-      
-      // Solid bottom border per item
-      doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2]);
-      doc.setLineWidth(0.15);
-      doc.line(15, y + 8, 195, y + 8);
-
-      doc.setTextColor(darkColor[0], darkColor[1], darkColor[2]);
-
-      // S.No
-      doc.setFont('helvetica', 'bold');
-      doc.text(`${index + 1}`, 21, y + 5, { align: 'center' });
-
-      // Item Name
-      doc.setFont('helvetica', 'normal');
-      let nameToRender = item.name;
-      if (nameToRender.length > 42) {
-        nameToRender = nameToRender.slice(0, 39) + '...';
-      }
-      doc.text(nameToRender, 27, y + 5);
-
-      // Qty & Unit
-      const displayQtyCol = `${item.qty} ${item.unit || 'pcs'}`;
-      doc.text(displayQtyCol, 115, y + 5, { align: 'right' });
-
-      // Unit Price
-      doc.text(`Rs.${formatCurrency(item.price)}`, 150, y + 5, { align: 'right' });
-
-      // Total Item Price
-      const itemTotal = item.qty * item.price;
-      doc.setFont('helvetica', 'bold');
-      doc.text(`Rs.${formatCurrency(itemTotal)}`, 190, y + 5, { align: 'right' });
-
-      y += 8;
-
-      // Graceful Table Page break handling
-      if (y > 235 && index < sale.items.length - 1) {
-        doc.addPage();
-        // Top strip
-        doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-        doc.rect(0, 0, 210, 8, 'F');
-
-        // Reference tag
-        doc.setTextColor(darkColor[0], darkColor[1], darkColor[2]);
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(10);
-        doc.text(`Invoice No: #${sale.billNo} - Page ${doc.getNumberOfPages()}`, 15, 15);
-
-        y = 22;
-        // Re-draw Table Header inside new page
-        doc.setFillColor(darkColor[0], darkColor[1], darkColor[2]);
-        doc.rect(15, y, 180, 8, 'F');
-        doc.setTextColor(255, 255, 255);
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(8.5);
-        doc.text('S.No', 21, y + 5.5, { align: 'center' });
-        doc.text('Items & Services Ordered', 27, y + 5.5);
-        doc.text('Qty', 115, y + 5.5, { align: 'right' });
-        doc.text('Unit Price', 150, y + 5.5, { align: 'right' });
-        doc.text('Total (INR)', 190, y + 5.5, { align: 'right' });
-
-        y += 8;
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(9);
-      }
-    });
-
-    y += 8;
-
-    // --- TOTALS & CALCULATIONS COLUMN (Bottom Right) ---
-    const labelX = 145;
-    const valX = 190;
-    doc.setFontSize(9);
-
-    const renderCalculationLine = (labelLabel: string, valueStr: string, isAccentBold = false) => {
-      doc.setTextColor(isAccentBold ? darkColor[0] : mutColor[0], isAccentBold ? darkColor[1] : mutColor[1], isAccentBold ? darkColor[2] : mutColor[2]);
-      doc.setFont('helvetica', isAccentBold ? 'bold' : 'normal');
-      doc.text(labelLabel, labelX, y, { align: 'right' });
-      doc.text(valueStr, valX, y, { align: 'right' });
-      y += 5.5;
-    };
-
-    const cur = getPdfCurrency(settings.currency);
-    renderCalculationLine('Subtotal Amt:', `${cur}${formatCurrency(sale.subtotal)}`);
-    
-    if (sale.discount > 0) {
-      renderCalculationLine('Total Discount:', `-${cur}${formatCurrency(sale.discount)}`);
-    }
-    
-    if (sale.gst > 0) {
-      renderCalculationLine(`GST Tax (${sale.gstPct || 0}%):`, `${cur}${formatCurrency(sale.gst)}`);
-    }
-
-    // Elegant thick accent Grand Total highlight block
-    doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-    doc.rect(115, y - 2.5, 80, 9.5, 'F');
-
-    doc.setTextColor(255, 255, 255);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(11);
-    doc.text('GRAND TOTAL:', 119, y + 3.8);
-    doc.text(`${cur}${formatCurrency(sale.total)}`, 191, y + 3.8, { align: 'right' });
-
-    // --- STORE / COMPLIANCE NOTES BLOCK (Bottom Left) ---
-    let notesY = y + 10;
-    if (notesY < 135) {
-      notesY = 160; 
-    }
-    doc.setTextColor(darkColor[0], darkColor[1], darkColor[2]);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8.5);
-    doc.text('TERMS & NOTES', 15, notesY);
-    notesY += 4.5;
-
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.setTextColor(mutColor[0], mutColor[1], mutColor[2]);
-    
-    if (sale.paymentMethod === 'split') {
-      const split = sale.splitDetails || { cashAmount: 0, upiAmount: 0 };
-      doc.text(`Payment channels used: SPLIT (Cash ${cur}${split.cashAmount} / UPI ${cur}${split.upiAmount})`, 15, notesY);
-    } else {
-      doc.text(`Payment channel used: ${(sale.paymentMethod || 'cash').toUpperCase()}`, 15, notesY);
-    }
-    notesY += 4;
-    if (settings.showUpiQrOnBill !== false && settings.upi) {
-      doc.text(`UPI Virtual Payment Address: ${settings.upi}`, 15, notesY);
-      notesY += 4;
-    }
-    if (settings.showFooterOnBill !== false && settings.footer) {
-      doc.text(settings.footer, 15, notesY);
-      notesY += 4;
-    }
-    
-    if (settings.showTermsOnBill === true && settings.termsTextOnBill) {
-      settings.termsTextOnBill.split('\n').forEach(termLine => {
-        if (termLine.trim()) {
-          doc.text(termLine.trim(), 15, notesY);
-          notesY += 4;
-        }
-      });
-    } else {
-      doc.text('Computer-generated tax receipt. Valid for return in 7 days.', 15, notesY);
-    }
-
-    // Draw return transaction barcode on bottom left
-    if (settings.showBarcodeOnBill !== false) {
-      const barcodeImg = getBarcodeDataURL(String(sale.billNo));
-      if (barcodeImg) {
-        doc.setTextColor(darkColor[0], darkColor[1], darkColor[2]);
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(8);
-        doc.text('RETURN CHECK-IN BARCODE & QUICK SCAN QR', 15, notesY + 6);
-        doc.addImage(barcodeImg, 'PNG', 15, notesY + 8, 48, 11, undefined, 'FAST');
-
-        const billQrBase64 = await loadAnyQrCode(String(sale.billNo));
-        if (billQrBase64) {
-          doc.addImage(billQrBase64, 'JPEG', 68, notesY + 6, 14, 14, undefined, 'FAST');
-        }
-      }
-    }
-
-    // Draw payment QR on bottom right
-    if (settings.showUpiQrOnBill !== false && settings.upi) {
-      const qrBase64 = await loadQrCode(settings.upi, settings.shopName || 'ShopPOS Store', sale.total);
-      if (qrBase64) {
-        doc.setTextColor(darkColor[0], darkColor[1], darkColor[2]);
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(8);
-        doc.text('SCAN TO PAY (UPI)', 145, notesY + 6);
-        doc.addImage(qrBase64, 'JPEG', 145, notesY + 8, 25, 25, undefined, 'FAST');
-        
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(7.5);
-        doc.setTextColor(mutColor[0], mutColor[1], mutColor[2]);
-        doc.text(`VPA: ${settings.upi}`, 145, notesY + 35);
-      }
-    }
-
-    return doc;
+  const generateA4PDFDoc = async (overrideFormat?: BillFormatKey): Promise<jsPDF> => {
+    return generateInvoicePdfDoc(sale, settings, overrideFormat || billFormat, receiptText);
   };
 
   const handleDownloadPDF = async () => {
@@ -973,52 +648,66 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
   };
 
   return (
-    <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 transition-colors">
-      <div className="flex flex-wrap justify-between items-center gap-2 mb-3">
+    <div className="bg-white dark:bg-slate-900 rounded-3xl p-4 sm:p-5 border border-slate-200 dark:border-slate-800 transition-colors shadow-2xl space-y-4">
+      {/* Top Header */}
+      <div className="flex items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800/80 pb-3">
         <div className="flex items-center gap-2.5">
-          <h4 className="font-extrabold text-slate-800 dark:text-slate-200 text-sm uppercase tracking-wider">Thermal Print Preview</h4>
-          {/* Quick Paper Dimension Selector */}
-          <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-lg border border-slate-200 dark:border-slate-700">
-            <button
-              type="button"
-              onClick={() => setPaperSize('58mm')}
-              className={`px-2 py-0.5 text-[10px] font-black uppercase rounded-md transition-all cursor-pointer ${
-                paperSize === '58mm'
-                  ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
-              }`}
-              title="Switch to 58mm (2-inch standard) receipt format"
-            >
-              58mm Roll
-            </button>
-            <button
-              type="button"
-              onClick={() => setPaperSize('80mm')}
-              className={`px-2 py-0.5 text-[10px] font-black uppercase rounded-md transition-all cursor-pointer ${
-                paperSize === '80mm'
-                  ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
-              }`}
-              title="Switch to 80mm (3-inch wide POS) receipt format"
-            >
-              80mm Roll
-            </button>
+          <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-xs">
+            <FileText className="w-4 h-4" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-black text-slate-800 dark:text-slate-100 uppercase tracking-wider">
+                Bill #{sale.billNo}
+              </h3>
+              <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full border ${activeFormatConfig.tagClass}`}>
+                {activeFormatConfig.tag}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 font-semibold">{formatDate(sale.timestamp)} · ₹{formatCurrency(sale.total)}</p>
           </div>
         </div>
 
         <div className="flex items-center gap-1.5">
+          {billFormat !== 'thermal' && (
+            <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700 text-[10px] font-bold">
+              <button
+                type="button"
+                onClick={() => setViewMode('formatted')}
+                className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                  viewMode === 'formatted'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                }`}
+              >
+                A4 View
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('rawText')}
+                className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                  viewMode === 'rawText'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                }`}
+              >
+                Slip
+              </button>
+            </div>
+          )}
+
           <button 
             type="button"
             onClick={handleCopy}
-            className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-500 hover:text-indigo-600 transition-colors cursor-pointer"
+            className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl text-slate-500 hover:text-indigo-600 transition-colors cursor-pointer"
             title="Copy Receipt text"
           >
-            {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">Copy text</span>}
+            {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <span className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 px-1">Copy</span>}
           </button>
           <button 
             type="button"
             onClick={onClose}
-            className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-rose-500 transition-colors cursor-pointer"
+            className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl text-slate-400 hover:text-rose-500 transition-colors cursor-pointer"
             title="Close Receipt Overlay"
           >
             <X className="w-4 h-4" />
@@ -1026,108 +715,236 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
         </div>
       </div>
 
+      {/* 6 Bill Formats Selector Ribbon (Vyapar Style) */}
+      <div className="space-y-1.5 bg-slate-50/80 dark:bg-slate-950/60 p-2.5 rounded-2xl border border-slate-150 dark:border-slate-800/80">
+        <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 px-1">
+          <span>Bill Format Template (6 Presets)</span>
+          {onUpdateSettings && (
+            <div className="flex items-center gap-1.5">
+              {savedDefaultNotice ? (
+                <span className="text-emerald-600 dark:text-emerald-400 font-extrabold flex items-center gap-1">
+                  <Check className="w-3 h-3" /> Saved as Store Default!
+                </span>
+              ) : billFormat === (settings.billFormat || 'regular') ? (
+                <span className="text-indigo-600 dark:text-indigo-400 font-extrabold flex items-center gap-1">
+                  <Star className="w-3 h-3 fill-indigo-600 text-indigo-600" /> Default Store Format
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  disabled={isSavingFormatDefault}
+                  onClick={handleSaveAsDefault}
+                  className="text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300 font-extrabold flex items-center gap-1 cursor-pointer hover:underline disabled:opacity-50"
+                  title="Make this the default bill format for all future bills"
+                >
+                  <Star className="w-3 h-3" /> Set as Default
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 6 Format Buttons */}
+        <div className="flex flex-wrap items-center gap-1.5 pb-1">
+          {BILL_FORMATS.map((fmt) => (
+            <button
+              key={fmt.id}
+              type="button"
+              onClick={() => {
+                setBillFormat(fmt.id);
+                if (fmt.id !== 'thermal') {
+                  setViewMode('formatted');
+                }
+              }}
+              className={`px-2.5 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-wider whitespace-nowrap flex items-center gap-1.5 transition-all cursor-pointer border ${
+                billFormat === fmt.id
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                  : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-850'
+              }`}
+            >
+              <span>{fmt.name.split('/')[0].trim()}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
       {autoSavedNotice && (
-        <div className="mb-3 p-2 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 rounded-xl flex items-center gap-2 text-emerald-800 dark:text-emerald-300 text-xs font-semibold">
+        <div className="p-2 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 rounded-xl flex items-center gap-2 text-emerald-800 dark:text-emerald-300 text-xs font-semibold">
           <FolderCheck className="w-4 h-4 text-emerald-600 shrink-0" />
           <span className="truncate">{autoSavedNotice}</span>
         </div>
       )}
 
-      <pre className="font-mono text-[11px] leading-relaxed bg-slate-50 text-slate-800 rounded-xl p-3 border border-slate-100 dark:bg-slate-950 dark:text-slate-300 dark:border-slate-850 overflow-x-auto max-h-[200px] overflow-y-auto whitespace-pre-wrap select-all transition-colors">
-        {receiptText}
-      </pre>
-
-      {/* Visual Barcode & Payment QR Code Container */}
-      <div className="mt-3 bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-850 text-center space-y-3">
-        {/* Transaction Scanner Barcode & QR Code */}
-        <div className="grid grid-cols-2 gap-3 pb-1">
-          {/* Barcode */}
-          <div className="flex flex-col items-center justify-center p-2.5 bg-white keep-white rounded-xl border border-slate-300 shadow-3xs text-slate-900">
-            <span className="text-[9px] font-black uppercase text-indigo-700 tracking-wider mb-1">
-              Linear Barcode
-            </span>
-            <div className="w-full flex justify-center overflow-hidden bg-white keep-white p-1 rounded">
-              <canvas ref={barcodeRef} className="max-w-full h-11 block bg-white keep-white" />
-            </div>
-            <span className="text-[8px] font-mono font-bold text-slate-600 mt-1">
-              Bill No: #{sale.billNo}
-            </span>
-          </div>
-
-          {/* QR Code */}
-          <div className="flex flex-col items-center justify-center p-2.5 bg-white keep-white rounded-xl border border-slate-300 shadow-3xs text-slate-900">
-            <span className="text-[9px] font-black uppercase text-indigo-700 tracking-wider mb-1">
-              Quick Scan QR
-            </span>
-            <div className="bg-white keep-white p-1 rounded-lg border border-slate-200 shadow-3xs">
-              <img
-                src={`https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(String(sale.billNo))}`}
-                alt="Bill Re-open QR"
-                className="w-11 h-11 object-contain bg-white keep-white"
-                referrerPolicy="no-referrer"
-              />
-            </div>
-            <span className="text-[8px] font-mono font-bold text-slate-600 mt-1">
-              Re-Open Transaction
-            </span>
-          </div>
+      {/* PREVIEW CONTAINER */}
+      {billFormat !== 'thermal' && viewMode === 'formatted' ? (
+        <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden bg-slate-100 dark:bg-slate-950 p-2 max-h-[380px] overflow-y-auto custom-scrollbar shadow-inner">
+          <FormattedInvoiceView
+            sale={sale}
+            settings={settings}
+            format={billFormat}
+            barcodeDataUrl={barcodeDataUrl}
+            upiQrDataUrl={upiQrDataUrl}
+          />
         </div>
-
-        {/* UPI Checkout Payment QR */}
-        {settings.upi && (
-          <div className="flex flex-col items-center pt-2.5 border-t border-slate-200/50 dark:border-slate-850/50">
-            <span className="text-[10px] font-black uppercase text-indigo-600 dark:text-indigo-400 tracking-wider mb-1">
-              Store Payment QR
+      ) : (
+        <div className="space-y-3">
+          {/* Thermal Dimension Selector if thermal */}
+          <div className="flex items-center justify-between px-1">
+            <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+              Thermal Paper Width:
             </span>
-            <div className="bg-white keep-white p-2 rounded-xl inline-block border border-slate-200 shadow-sm relative group overflow-hidden">
-              <img
-                src={`https://api.qrserver.com/v1/create-qr-code/?size=130x130&data=${encodeURIComponent(
-                  `upi://pay?pa=${settings.upi}&pn=${encodeURIComponent(settings.shopName || 'ShopPOS Store')}&am=${sale.total}&cu=INR`
-                )}`}
-                alt="UPI Store QR"
-                className="w-28 h-28 animate-fade-in keep-white"
-                referrerPolicy="no-referrer"
-              />
-              <div className="absolute inset-0 bg-white/95 keep-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center p-1.5 text-center rounded-xl pointer-events-none">
-                <span className="text-[8.5px] font-black text-slate-800 uppercase tracking-tight">
-                  Scan to Pay Rs.{formatCurrency(sale.total)}
+            <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-lg border border-slate-200 dark:border-slate-700">
+              <button
+                type="button"
+                onClick={() => setPaperSize('58mm')}
+                className={`px-2 py-0.5 text-[10px] font-black uppercase rounded-md transition-all cursor-pointer ${
+                  paperSize === '58mm'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+                title="Switch to 58mm (2-inch standard) receipt format"
+              >
+                58mm Roll
+              </button>
+              <button
+                type="button"
+                onClick={() => setPaperSize('80mm')}
+                className={`px-2 py-0.5 text-[10px] font-black uppercase rounded-md transition-all cursor-pointer ${
+                  paperSize === '80mm'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+                title="Switch to 80mm (3-inch wide POS) receipt format"
+              >
+                80mm Roll
+              </button>
+            </div>
+          </div>
+
+          <pre className="font-mono text-[11px] leading-relaxed bg-slate-50 text-slate-800 rounded-xl p-3 border border-slate-100 dark:bg-slate-950 dark:text-slate-300 dark:border-slate-850 overflow-x-auto max-h-[220px] overflow-y-auto whitespace-pre-wrap select-all transition-colors">
+            {receiptText}
+          </pre>
+
+          {/* Visual Barcode & Payment QR Code Container */}
+          <div className="bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-850 text-center space-y-3">
+            <div className="grid grid-cols-2 gap-3 pb-1">
+              {/* Barcode */}
+              <div className="flex flex-col items-center justify-center p-2.5 bg-white keep-white rounded-xl border border-slate-300 shadow-3xs text-slate-900">
+                <span className="text-[9px] font-black uppercase text-indigo-700 tracking-wider mb-1">
+                  Linear Barcode
+                </span>
+                <div className="w-full flex justify-center overflow-hidden bg-white keep-white p-1 rounded">
+                  <canvas ref={barcodeRef} className="max-w-full h-11 block bg-white keep-white" />
+                </div>
+                <span className="text-[8px] font-mono font-bold text-slate-600 mt-1">
+                  Bill No: #{sale.billNo}
+                </span>
+              </div>
+
+              {/* QR Code */}
+              <div className="flex flex-col items-center justify-center p-2.5 bg-white keep-white rounded-xl border border-slate-300 shadow-3xs text-slate-900">
+                <span className="text-[9px] font-black uppercase text-indigo-700 tracking-wider mb-1">
+                  Quick Scan QR
+                </span>
+                <div className="bg-white keep-white p-1 rounded-lg border border-slate-200 shadow-3xs">
+                  <img
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(String(sale.billNo))}`}
+                    alt="Bill Re-open QR"
+                    className="w-11 h-11 object-contain bg-white keep-white"
+                    referrerPolicy="no-referrer"
+                  />
+                </div>
+                <span className="text-[8px] font-mono font-bold text-slate-600 mt-1">
+                  Re-Open Transaction
                 </span>
               </div>
             </div>
-            <div className="mt-1 flex flex-col items-center leading-normal">
-              <span className="text-[10px] font-extrabold text-slate-800 dark:text-slate-200">
-                Amount: Rs.{formatCurrency(sale.total)}
-              </span>
-              <span className="text-[8px] font-mono text-slate-400">
-                UPI: {settings.upi}
-              </span>
-            </div>
+
+            {/* UPI Checkout Payment QR */}
+            {settings.upi && (
+              <div className="flex flex-col items-center pt-2.5 border-t border-slate-200/50 dark:border-slate-850/50">
+                <span className="text-[10px] font-black uppercase text-indigo-600 dark:text-indigo-400 tracking-wider mb-1">
+                  Store Payment QR
+                </span>
+                <div className="bg-white keep-white p-2 rounded-xl inline-block border border-slate-200 shadow-sm relative group overflow-hidden">
+                  <img
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=130x130&data=${encodeURIComponent(
+                      `upi://pay?pa=${settings.upi}&pn=${encodeURIComponent(settings.shopName || 'ShopPOS Store')}&am=${sale.total}&cu=INR`
+                    )}`}
+                    alt="UPI Store QR"
+                    className="w-28 h-28 animate-fade-in keep-white"
+                    referrerPolicy="no-referrer"
+                  />
+                  <div className="absolute inset-0 bg-white/95 keep-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center p-1.5 text-center rounded-xl pointer-events-none">
+                    <span className="text-[8.5px] font-black text-slate-800 uppercase tracking-tight">
+                      Scan to Pay Rs.{formatCurrency(sale.total)}
+                    </span>
+                  </div>
+                </div>
+                <div className="mt-1 flex flex-col items-center leading-normal">
+                  <span className="text-[10px] font-extrabold text-slate-800 dark:text-slate-200">
+                    Amount: Rs.{formatCurrency(sale.total)}
+                  </span>
+                  <span className="text-[8px] font-mono text-slate-400">
+                    UPI: {settings.upi}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
+        </div>
+      )}
+
+      {/* ACTIONS GRID */}
+      <div className="grid grid-cols-6 gap-2 pt-1">
+        {/* Primary Print Button tailored to selected format */}
+        {billFormat === 'thermal' ? (
+          <>
+            <button
+              type="button"
+              disabled={isPrintingThermal}
+              onClick={() => handlePrintThermal(paperSize)}
+              className="col-span-3 flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-black uppercase bg-indigo-600 hover:bg-indigo-700 text-white active:scale-[0.98] transition-all cursor-pointer shadow-md tracking-wide disabled:opacity-50"
+              title={`Print directly using ${paperSize} thermal receipt dimensions (Ctrl+P)`}
+            >
+              <Printer className="w-4 h-4" />
+              <span>{isPrintingThermal ? 'Formatting...' : `Print ${paperSize} Thermal`}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handlePrintA4System}
+              className="col-span-3 flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-black uppercase bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-800 dark:hover:bg-slate-750 active:scale-[0.98] transition-all cursor-pointer shadow-md tracking-wide border border-slate-700"
+              title="Print formatted A4 Tax Invoice via system printer dialog"
+            >
+              <Printer className="w-4 h-4 text-indigo-400" />
+              <span>Print A4 Invoice</span>
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={handlePrintA4System}
+              className="col-span-3 flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-black uppercase bg-indigo-600 hover:bg-indigo-700 text-white active:scale-[0.98] transition-all cursor-pointer shadow-md tracking-wide border border-indigo-500"
+              title={`Print ${activeFormatConfig.name} via printer dialog`}
+            >
+              <Printer className="w-4 h-4" />
+              <span className="truncate">Print {activeFormatConfig.shortName}</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={isPrintingThermal}
+              onClick={() => handlePrintThermal(paperSize)}
+              className="col-span-3 flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-black uppercase bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-800 dark:hover:bg-slate-750 active:scale-[0.98] transition-all cursor-pointer shadow-md tracking-wide border border-slate-700 disabled:opacity-50"
+              title={`Print compact ${paperSize} thermal receipt (Ctrl+P)`}
+            >
+              <Printer className="w-4 h-4 text-indigo-400" />
+              <span>Print Thermal</span>
+            </button>
+          </>
         )}
-      </div>
-
-      <div className="grid grid-cols-6 gap-2 mt-4">
-        {/* Primary Action Row: Thermal & A4 Print */}
-        <button
-          type="button"
-          disabled={isPrintingThermal}
-          onClick={() => handlePrintThermal(paperSize)}
-          className="col-span-3 flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-black uppercase bg-indigo-600 hover:bg-indigo-700 text-white active:scale-[0.98] transition-all cursor-pointer shadow-md tracking-wide disabled:opacity-50"
-          title={`Print directly using ${paperSize} thermal receipt dimensions (Ctrl+P)`}
-        >
-          <Printer className="w-4 h-4" />
-          <span>{isPrintingThermal ? 'Formatting...' : `Print ${paperSize} Thermal`}</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={handlePrintA4System}
-          className="col-span-3 flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-black uppercase bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-800 dark:hover:bg-slate-750 active:scale-[0.98] transition-all cursor-pointer shadow-md tracking-wide border border-slate-700"
-          title="Print formatted A4 Tax Invoice via system printer dialog"
-        >
-          <Printer className="w-4 h-4 text-indigo-400" />
-          <span>Print A4 Invoice</span>
-        </button>
 
         {/* Secondary Action Row: Bluetooth Thermal & WhatsApp Share */}
         <button
@@ -1146,7 +963,7 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
           disabled={isSharing}
           onClick={() => handleSharePDFToWhatsApp('A4')}
           className="col-span-3 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-black uppercase bg-emerald-600 hover:bg-emerald-700 text-white active:scale-[0.98] transition-all cursor-pointer shadow-md tracking-wider disabled:opacity-50"
-          title="Generate & share professional PDF bill directly via WhatsApp"
+          title={`Generate & share ${activeFormatConfig.name} PDF bill directly via WhatsApp`}
         >
           <MessageCircle className="w-4 h-4" />
           <span>{isSharing ? 'Generating...' : 'WhatsApp PDF'}</span>
@@ -1177,10 +994,10 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
           type="button"
           onClick={handleDownloadA4PDF}
           className="col-span-2 flex flex-col items-center justify-center gap-0.5 py-2 rounded-xl text-[9px] font-extrabold bg-slate-50 hover:bg-slate-100 text-slate-700 dark:bg-slate-850 dark:hover:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-800 active:scale-[0.98] transition-transform cursor-pointer"
-          title="Download fully formatted professional A4-sized PDF invoice version"
+          title={`Download formatted ${activeFormatConfig.name} PDF`}
         >
           <FileDown className="w-3.5 h-3.5 text-indigo-500" />
-          <span>Save A4 PDF</span>
+          <span className="truncate max-w-[90%]">Save {activeFormatConfig.shortName}</span>
         </button>
 
         {/* Text Share Row */}

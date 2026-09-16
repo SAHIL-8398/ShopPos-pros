@@ -94,22 +94,22 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
   };
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3 w-full max-w-full overflow-x-hidden">
       {/* Search Input and Add Action */}
-      <div className="flex gap-2">
-        <div className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/80 rounded-xl px-3 py-2.5 flex items-center gap-2 shadow-xs focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500/20 transition-all">
-          <Search className="w-4 h-4 text-slate-400 dark:text-slate-500" />
+      <div className="flex flex-col sm:flex-row gap-2 w-full min-w-0">
+        <div className="flex-1 min-w-0 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/80 rounded-xl px-3 py-2.5 flex items-center gap-2 shadow-xs focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500/20 transition-all">
+          <Search className="w-4 h-4 text-slate-400 dark:text-slate-500 shrink-0" />
           <input
             type="text"
             placeholder={t('search_customers')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="flex-1 text-sm bg-transparent border-none outline-none focus:ring-0 text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-550"
+            className="flex-1 min-w-0 text-sm bg-transparent border-none outline-none focus:ring-0 text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-550"
           />
           {search && (
             <button
               onClick={() => setSearch('')}
-              className="text-xs font-bold text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-350 cursor-pointer"
+              className="text-xs font-bold text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-350 cursor-pointer shrink-0"
             >
               Clear
             </button>
@@ -117,21 +117,21 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
         </div>
         <button
           onClick={() => onOpenCustomerModal(null)}
-          className="px-4 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer active:scale-95 transition-all shadow-sm shrink-0"
+          className="px-4 py-2.5 sm:py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition-all shadow-sm shrink-0 whitespace-nowrap"
         >
           <Plus className="w-4 h-4 stroke-[3px]" />
-          {t('add_new_customer')}
+          <span>{t('add_new_customer')}</span>
         </button>
       </div>
 
       {/* Credit Summary Indicator */}
       {totalOutstandingCredit > 0 && (
-        <div className="bg-amber-50 dark:bg-amber-950/20 rounded-2xl p-4 border border-amber-100 dark:border-amber-900/30 flex justify-between items-center relative overflow-hidden select-none shadow-xs">
-          <div className="relative z-10">
+        <div className="bg-amber-50 dark:bg-amber-950/20 rounded-2xl p-4 border border-amber-100 dark:border-amber-900/30 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 relative overflow-hidden select-none shadow-xs w-full min-w-0">
+          <div className="relative z-10 min-w-0 flex-1">
             <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400 uppercase tracking-widest block">
               Cumulative Ledger credit
             </span>
-            <span className="text-xl font-black text-amber-900 dark:text-amber-200 block mt-1">
+            <span className="text-xl font-black text-amber-900 dark:text-amber-200 block mt-1 truncate">
               {settings?.currency || 'Rs.'}{formatCurrency(totalOutstandingCredit)}
             </span>
             <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-450 block mt-0.5">
@@ -141,7 +141,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
           <button
             type="button"
             onClick={() => setFilterDueOnly(!filterDueOnly)}
-            className={`relative z-10 px-3 py-1.5 rounded-xl text-xs font-extrabold uppercase transition-all shadow-xs cursor-pointer ${
+            className={`relative z-10 px-3 py-1.5 rounded-xl text-xs font-extrabold uppercase transition-all shadow-xs cursor-pointer shrink-0 whitespace-nowrap ${
               filterDueOnly 
                 ? 'bg-amber-600 text-white shadow-amber-600/30' 
                 : 'bg-white dark:bg-slate-900 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
@@ -153,7 +153,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
       )}
 
       {/* Sorted directory listings */}
-      <div className="space-y-2">
+      <div className="space-y-2 w-full min-w-0">
         {sortedCustomers.length > 0 ? (
           sortedCustomers.map(c => {
             // Locate transactions and outstanding stats
@@ -166,13 +166,13 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
               <div
                 key={c.id}
                 onClick={() => onOpenCustomerDetails(c.id)}
-                className={`w-full text-left bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-805/80 hover:bg-slate-50 dark:hover:bg-slate-850/50 rounded-2xl p-3.5 shadow-xs flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 transition-all cursor-pointer group ${
+                className={`w-full text-left bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-805/80 hover:bg-slate-50 dark:hover:bg-slate-850/50 rounded-2xl p-3.5 shadow-xs flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 transition-all cursor-pointer group min-w-0 overflow-hidden ${
                     outstanding > 0 ? 'border-l-4 border-l-amber-500' : 'border-l-slate-200 dark:border-l-slate-800'
                 }`}
               >
-                <div className="min-w-0 flex-1 pr-2">
+                <div className="min-w-0 flex-1 w-full sm:w-auto pr-0 sm:pr-2">
                   <div className="text-sm font-extrabold text-slate-800 dark:text-slate-100 flex items-center gap-2 flex-wrap">
-                    <span>{c.name}</span>
+                    <span className="break-words">{c.name}</span>
                     {outstanding > 0 && (
                       <span className="text-[9px] bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">
                         Khata Due
@@ -197,7 +197,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                   
                   <div className="text-[10px] font-semibold text-slate-450 dark:text-slate-500 mt-1 flex flex-wrap gap-2 items-center">
                     {c.phone ? (
-                      <span className="flex items-center gap-0.5"><Phone className="w-3 h-3 text-slate-400 dark:text-slate-500" />{c.phone}</span>
+                      <span className="flex items-center gap-0.5"><Phone className="w-3 h-3 text-slate-400 dark:text-slate-500 shrink-0" />{c.phone}</span>
                     ) : (
                       <span>No contact</span>
                     )}
@@ -206,8 +206,8 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                     {c.lastReminderSent && (
                       <>
                         <span>•</span>
-                        <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/30 px-1.5 py-0.5 rounded-md text-[9px]">
-                          <Clock className="w-2.5 h-2.5" />
+                        <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/30 px-1.5 py-0.5 rounded-md text-[9px] break-words">
+                          <Clock className="w-2.5 h-2.5 shrink-0" />
                           Reminder sent {new Date(c.lastReminderSent).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
                         </span>
                       </>
@@ -215,11 +215,11 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 flex-shrink-0 w-full sm:w-auto justify-between sm:justify-end border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-100 dark:border-slate-800">
+                <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-100 dark:border-slate-800 min-w-0">
                   {outstanding > 0 ? (
-                    <div className="flex items-center gap-2.5">
-                      <div className="text-right">
-                        <span className="text-sm font-black text-amber-650 dark:text-amber-400 block">
+                    <div className="flex items-center justify-between sm:justify-end gap-2.5 w-full sm:w-auto min-w-0">
+                      <div className="text-left sm:text-right shrink-0">
+                        <span className="text-sm font-black text-amber-650 dark:text-amber-400 block truncate">
                           {settings?.currency || 'Rs.'}{formatCurrency(outstanding)}
                         </span>
                         <span className="text-[9px] font-bold text-slate-400 dark:text-slate-500 block uppercase tracking-wider">
@@ -230,7 +230,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                       <button
                         type="button"
                         onClick={(e) => handleSendPaymentReminder(e, c, outstanding)}
-                        className={`px-3 py-2 rounded-xl text-xs font-black uppercase flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer shadow-xs ${
+                        className={`px-3 py-2 rounded-xl text-xs font-black uppercase flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer shadow-xs shrink-0 whitespace-nowrap ${
                           remindedCustomerId === c.id 
                             ? 'bg-emerald-700 text-white' 
                             : 'bg-emerald-600 hover:bg-emerald-700 text-white'
@@ -251,11 +251,11 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                       </button>
                     </div>
                   ) : (
-                    <span className="text-[10px] font-extrabold bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 px-2.5 py-1 rounded-full uppercase">
+                    <span className="text-[10px] font-extrabold bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 px-2.5 py-1 rounded-full uppercase shrink-0">
                       Ledger Clear
                     </span>
                   )}
-                  <ChevronRight className="w-4 h-4 text-slate-300 dark:text-slate-700 group-hover:text-slate-500 dark:group-hover:text-slate-400 group-hover:translate-x-0.5 transition-all hidden sm:block" />
+                  <ChevronRight className="w-4 h-4 text-slate-300 dark:text-slate-700 group-hover:text-slate-500 dark:group-hover:text-slate-400 group-hover:translate-x-0.5 transition-all hidden sm:block shrink-0" />
                 </div>
               </div>
             );

@@ -192,7 +192,8 @@ export interface Settings {
   loyaltyPointValue?: number; // Value of 1 point in currency (e.g. 1 point = ₹1, default: 1)
   loyaltyPointsPerSpend?: number; // Rs. spend required to earn 1 point (default: 50, meaning ₹50 spend = 1 point)
 
-  // Bill Format Settings
+  // Bill Format Settings (Vyapar-Style Formats)
+  billFormat?: 'regular' | 'thermal' | 'stylish' | 'classic' | 'simple' | 'retail';
   preferredReceiptPaperSize?: '58mm' | '80mm';
   showShopNameOnBill?: boolean;
   showAddressOnBill?: boolean;
@@ -207,6 +208,10 @@ export interface Settings {
   showFooterOnBill?: boolean;
   showTermsOnBill?: boolean;
   termsTextOnBill?: string;
+
+  // Barcode Label Typography & Brand Styling
+  barcodeLabelShopNameFont?: 'serif-bold' | 'serif-italic' | 'sans-bold' | 'sans-black' | 'mono-bold';
+  barcodeLabelShopNameColor?: 'indigo' | 'crimson' | 'emerald' | 'purple' | 'bronze' | 'charcoal' | 'black';
 }
 
 export interface Auth {

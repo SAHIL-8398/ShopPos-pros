@@ -578,51 +578,51 @@ export const BillingView: React.FC<BillingViewProps> = ({
 
       {/* Cart Customer and Checklist panels */}
       {cart.length > 0 && (
-        <div className="bg-slate-950 border border-slate-900 rounded-2xl p-4 text-slate-100 space-y-4 shadow-md mt-2">
-          <div className="flex justify-between items-center">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">{cartTotalQty} total units</span>
-            <span className="text-xl font-black text-white">{settings?.currency || 'Rs.'}{formatCurrency(cartSubtotal)}</span>
+        <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-4 sm:p-5 text-slate-800 dark:text-slate-100 space-y-4 shadow-xs mt-2">
+          <div className="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-800">
+            <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">{cartTotalQty} total units</span>
+            <span className="text-xl font-black text-slate-900 dark:text-white">{settings?.currency || 'Rs.'}{formatCurrency(cartSubtotal)}</span>
           </div>
 
-          <div className="border-t border-slate-900 pt-3">
-            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 pl-0.5 flex items-center gap-1.5">
-              <User className="w-3.5 h-3.5 text-indigo-400" />
-              Customer Ledgers (Optional)
+          <div className="space-y-3">
+            <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider pl-0.5 flex items-center gap-1.5">
+              <User className="w-3.5 h-3.5 text-indigo-500" />
+              Customer Details (Optional)
             </label>
             <input
               type="text"
               placeholder="Walk-in Customer Name"
               value={custName}
               onChange={(e) => setCustName(e.target.value)}
-              className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-600 mb-2.5 focus:outline-none focus:border-indigo-500 transition-colors"
+              className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
             />
-            <div className="grid grid-cols-2 gap-2 mb-3">
-              <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2">
-                <Phone className="w-3.5 h-3.5 text-slate-650" />
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex items-center gap-2 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2">
+                <Phone className="w-3.5 h-3.5 text-slate-400" />
                 <input
                   type="tel"
                   placeholder="Contact Mobile"
                   value={custPhone}
                   onChange={(e) => setCustPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
                   maxLength={10}
-                  className="flex-1 bg-transparent border-none text-xs text-white focus:outline-none placeholder-slate-600"
+                  className="flex-1 bg-transparent border-none text-xs text-slate-900 dark:text-white focus:outline-none placeholder-slate-400 dark:placeholder-slate-500"
                 />
               </div>
 
-              <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2">
-                <MapPin className="w-3.5 h-3.5 text-slate-600" />
+              <div className="flex items-center gap-2 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2">
+                <MapPin className="w-3.5 h-3.5 text-slate-400" />
                 <input
                   type="text"
                   placeholder="Street Address"
                   value={custAddress}
                   onChange={(e) => setCustAddress(e.target.value)}
-                  className="flex-1 bg-transparent border-none text-xs text-white focus:outline-none placeholder-slate-600"
+                  className="flex-1 bg-transparent border-none text-xs text-slate-900 dark:text-white focus:outline-none placeholder-slate-400 dark:placeholder-slate-500"
                 />
               </div>
             </div>
 
             {/* Estimate/Quotation and Dispatch Note Challan Action Grid */}
-            <div className="grid grid-cols-2 gap-2 mb-1">
+            <div className="grid grid-cols-2 gap-2 pt-1">
               <button
                 type="button"
                 onClick={() => {
@@ -638,7 +638,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
                     }
                   );
                 }}
-                className="flex items-center justify-center gap-1.5 py-2.5 bg-slate-900 hover:bg-slate-850 text-slate-300 border border-slate-800 hover:border-slate-700 text-[10px] font-black uppercase rounded-xl active:scale-95 transition-all cursor-pointer tracking-wider"
+                className="flex items-center justify-center gap-1.5 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-[10px] font-bold uppercase rounded-xl active:scale-95 transition-all cursor-pointer tracking-wider"
                 title="Download price quote estimate PDF"
               >
                 📄 Quote Estimate
@@ -663,7 +663,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
                     }
                   );
                 }}
-                className="flex items-center justify-center gap-1.5 py-2.5 bg-slate-900 hover:bg-slate-850 text-slate-300 border border-slate-800 hover:border-slate-700 text-[10px] font-black uppercase rounded-xl active:scale-95 transition-all cursor-pointer tracking-wider"
+                className="flex items-center justify-center gap-1.5 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-[10px] font-bold uppercase rounded-xl active:scale-95 transition-all cursor-pointer tracking-wider"
                 title="Download delivery dispatch challan note PDF"
               >
                 🚚 Delivery Challan
@@ -674,7 +674,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
           <button
             type="button"
             onClick={handleCheckoutSubmit}
-            className="w-full flex items-center justify-center gap-2 py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold text-sm rounded-xl active:scale-[0.985] transition-all shadow-md shadow-emerald-500/10 cursor-pointer"
+            className="w-full flex items-center justify-center gap-2 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-xl active:scale-[0.985] transition-all shadow-md shadow-emerald-600/20 cursor-pointer"
           >
             <CheckCircle className="w-4 h-4 fill-white" />
             {t('checkout')} → {settings?.currency || 'Rs.'}{formatCurrency(cartSubtotal)}

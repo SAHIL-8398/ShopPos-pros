@@ -350,6 +350,7 @@ export async function exportAndShareDatabaseBackup(dbData: any): Promise<{
           title: 'ShopPOS Pro Database Backup',
           text: `ShopPOS Pro Database Backup exported on ${new Date().toLocaleString()}.\nKeep this file safe to restore all products, sales, and accounts.`,
           url: saveRes.uri,
+          files: saveRes.uri ? [saveRes.uri] : undefined,
           dialogTitle: 'Save / Share ShopPOS Database Backup',
         });
       } catch (shareErr: any) {

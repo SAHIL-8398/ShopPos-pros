@@ -356,7 +356,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 
   return (
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[1000] flex items-end sm:items-center justify-center p-3 animate-fade-in">
-      <div className="bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-2xl w-full max-w-xl max-h-[92vh] overflow-hidden shadow-2xl border border-slate-100 dark:border-slate-800 flex flex-col">
+      <div className="bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-2xl w-full max-w-xl max-h-[92vh] overflow-hidden shadow-2xl border border-slate-100 dark:border-slate-800 flex flex-col min-w-0">
         {/* Header */}
         <div className="flex justify-between items-center p-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
           <div className="flex items-center gap-2">
@@ -382,7 +382,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
         </div>
 
         {/* Scrollable Form Body */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 space-y-6">
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-6 w-full max-w-full min-w-0">
           
           {/* SECTION 1: BASIC INFO */}
           <div className="space-y-4">
@@ -920,7 +920,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
           </div>
 
           {/* SECTION 3.5: PACKAGING & MANUFACTURING */}
-          <div className="space-y-4 pt-2">
+          <div className="space-y-4 pt-2 w-full min-w-0 overflow-x-hidden">
             <div className="border-b border-slate-100 dark:border-slate-800 pb-1">
               <h4 className="text-xs font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest">
                 📦 3.5. Alternate Units & Manufacturing
@@ -928,25 +928,25 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
             </div>
 
             {/* Alternate / Secondary Unit packaging toggle */}
-            <div className="bg-slate-50 dark:bg-slate-800/40 p-3.5 rounded-2xl border border-slate-150 dark:border-slate-800 space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
+            <div className="bg-slate-50 dark:bg-slate-800/40 p-3.5 rounded-2xl border border-slate-150 dark:border-slate-800 space-y-3 w-full min-w-0 overflow-hidden">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
                   <span className="text-xs font-bold text-slate-800 dark:text-slate-100 block">Enable Secondary / Alternate Selling Unit</span>
-                  <span className="text-[10px] text-slate-400 block">Sell in secondary units e.g. Stock in "box", sell in "piece", or stock in "kg", sell in "gram"</span>
+                  <span className="text-[10px] text-slate-400 block break-words">Sell in secondary units e.g. Stock in "box", sell in "piece", or stock in "kg", sell in "gram"</span>
                 </div>
                 <input
                   type="checkbox"
                   checked={hasAltUnit}
                   onChange={(e) => setHasAltUnit(e.target.checked)}
-                  className="w-4 h-4 text-indigo-600 focus:ring-indigo-500 rounded cursor-pointer"
+                  className="w-4 h-4 text-indigo-600 focus:ring-indigo-500 rounded cursor-pointer shrink-0"
                 />
               </div>
 
               {hasAltUnit && (
-                <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800 animate-fade-in">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800 animate-fade-in w-full min-w-0">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full min-w-0">
+                    <div className="min-w-0">
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 truncate">
                         Secondary Unit Name
                       </label>
                       <input
@@ -957,8 +957,8 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                         className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-white outline-none focus:border-indigo-500 font-bold"
                       />
                     </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                    <div className="min-w-0">
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 truncate" title={`Conversion Factor (1 ${unit || 'unit'} = X ${altUnitName || 'sec'})`}>
                         Conversion Factor (1 {unit || 'unit'} = X {altUnitName || 'sec'})
                       </label>
                       <input
@@ -971,10 +971,10 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1">
-                        <IndianRupee className="w-3 h-3 text-indigo-500" />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full min-w-0">
+                    <div className="min-w-0">
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1 truncate">
+                        <IndianRupee className="w-3 h-3 text-indigo-500 shrink-0" />
                         Secondary Unit Price (Optional Override)
                       </label>
                       <input
@@ -987,8 +987,8 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                         className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-white outline-none focus:border-indigo-500 font-bold"
                       />
                     </div>
-                    <div className="flex items-center">
-                      <div className="p-2.5 bg-indigo-50 dark:bg-indigo-950/30 rounded-xl border border-indigo-100 dark:border-indigo-900/40 text-[10px] text-indigo-700 dark:text-indigo-300 font-semibold w-full">
+                    <div className="flex items-center min-w-0">
+                      <div className="p-2.5 bg-indigo-50 dark:bg-indigo-950/30 rounded-xl border border-indigo-100 dark:border-indigo-900/40 text-[10px] text-indigo-700 dark:text-indigo-300 font-semibold w-full break-words leading-relaxed">
                         ℹ️ 1 {unit || 'unit'} contains {altUnitFactor || 1} {altUnitName || 'sec'}. Selling 1 {altUnitName || 'sec'} deducts {(1 / (altUnitFactor || 1)).toFixed(4)} {unit || 'unit'} from main stock.
                       </div>
                     </div>
@@ -998,68 +998,70 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
             </div>
 
             {/* BOM/Manufacturing Setup */}
-            <div className="bg-slate-50 dark:bg-slate-800/40 p-3 rounded-2xl border border-slate-150 dark:border-slate-800 space-y-3">
+            <div className="bg-slate-50 dark:bg-slate-800/40 p-3 rounded-2xl border border-slate-150 dark:border-slate-800 space-y-3 w-full min-w-0 overflow-hidden">
               <div>
                 <span className="text-xs font-bold text-slate-800 dark:text-slate-100 block">Manufacturing recipe (BOM)</span>
-                <span className="text-[10px] text-slate-400 block">Link raw materials to auto-assemble this product</span>
+                <span className="text-[10px] text-slate-400 block break-words">Link raw materials to auto-assemble this product</span>
               </div>
 
               {/* Add raw material item input */}
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2 w-full min-w-0">
                 <select
                   value={recipeProductId}
                   onChange={(e) => setRecipeProductId(e.target.value)}
-                  className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-2 py-1 text-xs text-slate-800 dark:text-white outline-none focus:border-indigo-500 font-semibold"
+                  className="flex-1 min-w-0 max-w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-slate-800 dark:text-white outline-none focus:border-indigo-500 font-semibold truncate"
                 >
                   <option value="">-- Select Raw Ingredient --</option>
                   {products
                     .filter(p => p.id !== product?.id)
                     .map(p => (
-                      <option key={p.id} value={p.id}>
+                      <option key={p.id} value={p.id} className="truncate">
                         {p.name} ({p.qty} {p.unit} in stock)
                       </option>
                     ))}
                 </select>
-                <input
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={recipeQty}
-                  onChange={(e) => setRecipeQty(Number(e.target.value))}
-                  placeholder="Qty"
-                  className="w-16 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-2 py-1 text-xs text-slate-800 dark:text-white outline-none focus:border-indigo-500 text-center font-bold"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!recipeProductId) return;
-                    const exists = bomItems.some(item => item.productId === recipeProductId);
-                    if (exists) {
-                      showAlert('Ingredient already added to Bill of Materials!', 'Duplicate Item');
-                      return;
-                    }
-                    setBomItems([...bomItems, { productId: recipeProductId, qtyNeeded: recipeQty }]);
-                    setRecipeProductId('');
-                    setRecipeQty(1);
-                  }}
-                  className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black rounded-xl active:scale-95 transition-all cursor-pointer"
-                >
-                  Add
-                </button>
+                <div className="flex gap-2 shrink-0">
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={recipeQty}
+                    onChange={(e) => setRecipeQty(Number(e.target.value))}
+                    placeholder="Qty"
+                    className="w-20 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-2 py-1.5 text-xs text-slate-800 dark:text-white outline-none focus:border-indigo-500 text-center font-bold"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!recipeProductId) return;
+                      const exists = bomItems.some(item => item.productId === recipeProductId);
+                      if (exists) {
+                        showAlert('Ingredient already added to Bill of Materials!', 'Duplicate Item');
+                        return;
+                      }
+                      setBomItems([...bomItems, { productId: recipeProductId, qtyNeeded: recipeQty }]);
+                      setRecipeProductId('');
+                      setRecipeQty(1);
+                    }}
+                    className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black rounded-xl active:scale-95 transition-all cursor-pointer shrink-0"
+                  >
+                    Add
+                  </button>
+                </div>
               </div>
 
               {bomItems.length > 0 && (
-                <div className="space-y-1.5 pt-1.5 border-t border-slate-100 dark:border-slate-800">
+                <div className="space-y-1.5 pt-1.5 border-t border-slate-100 dark:border-slate-800 w-full min-w-0">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Recipe Compositions:</span>
-                  <div className="space-y-1 max-h-[120px] overflow-y-auto">
+                  <div className="space-y-1 max-h-[120px] overflow-y-auto w-full min-w-0">
                     {bomItems.map((item, index) => {
                       const ingProd = products.find(p => p.id === item.productId);
                       return (
-                        <div key={item.productId || index} className="flex justify-between items-center text-xs bg-white dark:bg-slate-900/60 p-2 rounded-lg border border-slate-100 dark:border-slate-800/80">
-                          <span className="font-semibold text-slate-700 dark:text-slate-200 truncate pr-2 flex-1">
+                        <div key={item.productId || index} className="flex justify-between items-center text-xs bg-white dark:bg-slate-900/60 p-2 rounded-lg border border-slate-100 dark:border-slate-800/80 gap-2 min-w-0 w-full">
+                          <span className="font-semibold text-slate-700 dark:text-slate-200 truncate flex-1 min-w-0">
                             {ingProd ? ingProd.name : 'Unknown Raw Material'}
                           </span>
-                          <span className="font-bold text-indigo-600 dark:text-indigo-400 shrink-0 text-[11px] pr-2">
+                          <span className="font-bold text-indigo-600 dark:text-indigo-400 shrink-0 text-[11px] whitespace-nowrap">
                             {item.qtyNeeded} {ingProd?.unit || 'pcs'}
                           </span>
                           <button
@@ -1067,7 +1069,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                             onClick={() => {
                               setBomItems(bomItems.filter(b => b.productId !== item.productId));
                             }}
-                            className="text-rose-500 font-bold hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 p-1 rounded"
+                            className="text-rose-500 font-bold hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 p-1 rounded shrink-0 cursor-pointer"
                           >
                             Remove
                           </button>

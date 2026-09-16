@@ -347,6 +347,7 @@ export async function createDefaultDatabase(): Promise<AppDatabase> {
       autoLogoutOnDayChange: true,
       dayChangeWarningMinutes: 5,
       preferredReceiptPaperSize: '58mm',
+      billFormat: 'regular',
       showGstinOnBill: true,
       showFssaiOnBill: true,
       showUpiQrOnBill: true,

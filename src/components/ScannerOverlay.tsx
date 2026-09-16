@@ -1017,7 +1017,7 @@ export const ScannerOverlay: React.FC<ScannerOverlayProps> = ({
                 Clear
               </button>
             </div>
-            <div className="flex gap-2 overflow-x-auto pb-0.5 scrollbar-none">
+            <div className="flex flex-wrap gap-2 pb-0.5">
               {recentScans.map((rs, idx) => (
                 <div key={idx} className="bg-slate-800/90 border border-slate-700/60 p-2 rounded-lg shrink-0 w-36 flex flex-col justify-between">
                   <span className="text-[10px] font-extrabold text-white line-clamp-1 leading-tight">{rs.name}</span>

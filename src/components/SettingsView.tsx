@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { motion } from 'motion/react';
 import { 
   Settings, 
@@ -56,6 +56,9 @@ import { useTranslation } from '../context/LocalizationContext';
 import { useDialog } from '../context/DialogContext';
 import { checkBiometricsAvailability, BiometricCheckResult } from '../services/biometricService';
 import { DEFAULT_WIDGET_CONFIGS, WIDGET_STORAGE_KEY, loadDashboardWidgets } from './DashboardView';
+import { SHOP_NAME_FONTS, SHOP_NAME_COLORS, ShopNameFontKey, ShopNameColorKey } from './LabelGenerator';
+import { BillFormatKey, BILL_FORMATS, getBillFormatConfig } from '../constants/billFormats';
+import { BillFormatSelector } from './BillFormatSelector';
 
 interface SettingsViewProps {
   db: AppDatabase;
@@ -133,7 +136,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [autoLogoutOnDayChange, setAutoLogoutOnDayChange] = useState<boolean>(currentSettings.autoLogoutOnDayChange !== false);
   const [dayChangeWarningMinutes, setDayChangeWarningMinutes] = useState<number>(currentSettings.dayChangeWarningMinutes || 5);
 
-  // Bill Format Options states
+  // Bill Format Options states (Vyapar-Style Formats)
+  const [billFormat, setBillFormat] = useState<BillFormatKey>(currentSettings.billFormat || 'regular');
   const [preferredReceiptPaperSize, setPreferredReceiptPaperSize] = useState<'58mm' | '80mm'>(currentSettings.preferredReceiptPaperSize || '58mm');
   const [showShopNameOnBill, setShowShopNameOnBill] = useState<boolean>(currentSettings.showShopNameOnBill !== false);
   const [showAddressOnBill, setShowAddressOnBill] = useState<boolean>(currentSettings.showAddressOnBill !== false);
@@ -148,6 +152,38 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [showFooterOnBill, setShowFooterOnBill] = useState<boolean>(currentSettings.showFooterOnBill !== false);
   const [showTermsOnBill, setShowTermsOnBill] = useState<boolean>(!!currentSettings.showTermsOnBill);
   const [termsTextOnBill, setTermsTextOnBill] = useState<string>(currentSettings.termsTextOnBill || '1. Goods once sold cannot be returned.\n2. Please carry receipt for eligible returns.');
+
+  // Barcode Label Typography & Color branding states
+  const [barcodeLabelShopNameFont, setBarcodeLabelShopNameFont] = useState<ShopNameFontKey>(
+    currentSettings.barcodeLabelShopNameFont || (localStorage.getItem('shoppos_label_shop_font') as ShopNameFontKey) || 'serif-bold'
+  );
+  const [barcodeLabelShopNameColor, setBarcodeLabelShopNameColor] = useState<ShopNameColorKey>(
+    currentSettings.barcodeLabelShopNameColor || (localStorage.getItem('shoppos_label_shop_color') as ShopNameColorKey) || 'indigo'
+  );
+
+  const handleUpdateBarcodeLabelFont = (fontKey: ShopNameFontKey) => {
+    setBarcodeLabelShopNameFont(fontKey);
+    localStorage.setItem('shoppos_label_shop_font', fontKey);
+    onSaveShopInfo({ barcodeLabelShopNameFont: fontKey });
+  };
+
+  const handleUpdateBarcodeLabelColor = (colorKey: ShopNameColorKey) => {
+    setBarcodeLabelShopNameColor(colorKey);
+    localStorage.setItem('shoppos_label_shop_color', colorKey);
+    onSaveShopInfo({ barcodeLabelShopNameColor: colorKey });
+  };
+
+  const activeShopFont = useMemo(() => {
+    return SHOP_NAME_FONTS.find(f => f.id === barcodeLabelShopNameFont) || SHOP_NAME_FONTS[0];
+  }, [barcodeLabelShopNameFont]);
+
+  const activeShopColor = useMemo(() => {
+    return SHOP_NAME_COLORS[barcodeLabelShopNameColor] || SHOP_NAME_COLORS.indigo;
+  }, [barcodeLabelShopNameColor]);
+
+  const activeBillFormatConfig = useMemo(() => {
+    return getBillFormatConfig(billFormat);
+  }, [billFormat]);
 
   // Security Credentials update states
   const [nid, setNid] = useState<string>('');
@@ -180,6 +216,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   // Dashboard layout configuration states
   const [dashboardWidgets, setDashboardWidgets] = useState<DashboardWidgetConfig[]>(() => loadDashboardWidgets());
   const [widgetSaveToast, setWidgetSaveToast] = useState<string | null>(null);
+  const [isExportingBackup, setIsExportingBackup] = useState<boolean>(false);
+
+  const handleExportWithFeedback = async () => {
+    try {
+      setIsExportingBackup(true);
+      await onExportData();
+    } finally {
+      setIsExportingBackup(false);
+    }
+  };
 
   const persistDashboardWidgets = (newWidgets: DashboardWidgetConfig[]) => {
     setDashboardWidgets(newWidgets);
@@ -263,6 +309,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setAutoLogoutOnDayChange(currentSettings.autoLogoutOnDayChange !== false);
     setDayChangeWarningMinutes(currentSettings.dayChangeWarningMinutes || 5);
     setPreferredReceiptPaperSize(currentSettings.preferredReceiptPaperSize || '58mm');
+    setBillFormat(currentSettings.billFormat || 'regular');
 
     setShowShopNameOnBill(currentSettings.showShopNameOnBill !== false);
     setShowAddressOnBill(currentSettings.showAddressOnBill !== false);
@@ -277,6 +324,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setShowFooterOnBill(currentSettings.showFooterOnBill !== false);
     setShowTermsOnBill(!!currentSettings.showTermsOnBill);
     setTermsTextOnBill(currentSettings.termsTextOnBill || '1. Goods once sold cannot be returned.\n2. Please carry receipt for eligible returns.');
+    if (currentSettings.barcodeLabelShopNameFont) {
+      setBarcodeLabelShopNameFont(currentSettings.barcodeLabelShopNameFont);
+    }
+    if (currentSettings.barcodeLabelShopNameColor) {
+      setBarcodeLabelShopNameColor(currentSettings.barcodeLabelShopNameColor);
+    }
   }, [currentSettings]);
 
   useEffect(() => {
@@ -355,6 +408,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       showFooterOnBill,
       showTermsOnBill,
       termsTextOnBill,
+      barcodeLabelShopNameFont,
+      barcodeLabelShopNameColor,
+      billFormat,
+      preferredReceiptPaperSize,
     });
 
     // Also update current active profile's name in localstorage list to keep synced!
@@ -471,7 +528,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const needsBackupAlert = !lastBackupTime || (Date.now() - new Date(lastBackupTime).getTime()) > 7 * 24 * 60 * 60 * 1000;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 w-full max-w-full overflow-x-hidden">
       {/* Settings Panel Title */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 select-none pb-2">
         <div>
@@ -486,18 +543,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       </div>
 
       {/* Tabs Navigation */}
-      <div className="bg-slate-100 dark:bg-slate-900 border border-slate-200/50 dark:border-slate-800/60 p-1.5 rounded-2xl flex flex-wrap gap-1 select-none">
+      <div className="bg-slate-100 dark:bg-slate-900 border border-slate-200/50 dark:border-slate-800/60 p-1.5 rounded-2xl grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1.5 select-none w-full">
         <button
           type="button"
           onClick={() => setActiveSection('profile')}
-          className={`flex-1 min-w-[120px] py-3 px-4 rounded-xl text-center text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer ${
+          className={`w-full py-2.5 px-2 rounded-xl text-center text-[11px] sm:text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
             activeSection === 'profile'
               ? 'bg-white dark:bg-slate-850 text-indigo-650 dark:text-indigo-400 shadow-sm border border-slate-200/40 dark:border-slate-800/50'
               : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
           }`}
         >
-          <Building className="w-4 h-4" />
-          Store Profile
+          <Building className="w-3.5 h-3.5" />
+          <span>Store Profile</span>
         </button>
 
         <button
@@ -506,66 +563,66 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             setActiveSection('shops');
             setIsEditingStore(false);
           }}
-          className={`flex-1 min-w-[120px] py-3 px-4 rounded-xl text-center text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer ${
+          className={`w-full py-2.5 px-2 rounded-xl text-center text-[11px] sm:text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
             activeSection === 'shops'
               ? 'bg-white dark:bg-slate-850 text-indigo-650 dark:text-indigo-400 shadow-sm border border-slate-200/40 dark:border-slate-800/50'
               : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
           }`}
         >
-          <Building className="w-4 h-4" />
-          Manage Shops
+          <Building className="w-3.5 h-3.5" />
+          <span>Manage Shops</span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveSection('modules')}
-          className={`flex-1 min-w-[120px] py-3 px-4 rounded-xl text-center text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer ${
+          className={`w-full py-2.5 px-2 rounded-xl text-center text-[11px] sm:text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
             activeSection === 'modules'
               ? 'bg-white dark:bg-slate-850 text-indigo-650 dark:text-indigo-400 shadow-sm border border-slate-200/40 dark:border-slate-800/50'
               : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
           }`}
         >
-          <Sparkles className="w-4 h-4" />
-          Tools & Modules
+          <Sparkles className="w-3.5 h-3.5" />
+          <span>Tools & Modules</span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveSection('security')}
-          className={`flex-1 min-w-[120px] py-3 px-4 rounded-xl text-center text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer ${
+          className={`w-full py-2.5 px-2 rounded-xl text-center text-[11px] sm:text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
             activeSection === 'security'
               ? 'bg-white dark:bg-slate-850 text-indigo-650 dark:text-indigo-400 shadow-sm border border-slate-200/40 dark:border-slate-800/50'
               : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
           }`}
         >
-          <Lock className="w-4 h-4" />
-          Security Keys
+          <Lock className="w-3.5 h-3.5" />
+          <span>Security Keys</span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveSection('layout')}
-          className={`flex-1 min-w-[120px] py-3 px-4 rounded-xl text-center text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer ${
+          className={`w-full py-2.5 px-2 rounded-xl text-center text-[11px] sm:text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
             activeSection === 'layout'
               ? 'bg-white dark:bg-slate-850 text-indigo-650 dark:text-indigo-400 shadow-sm border border-slate-200/40 dark:border-slate-800/50'
               : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
           }`}
         >
-          <SlidersHorizontal className="w-4 h-4" />
-          Dashboard Layout
+          <SlidersHorizontal className="w-3.5 h-3.5" />
+          <span>Dashboard Layout</span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveSection('database')}
-          className={`flex-1 min-w-[140px] py-3 px-4 rounded-xl text-center text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer relative ${
+          className={`w-full py-2.5 px-2 rounded-xl text-center text-[11px] sm:text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer relative ${
             activeSection === 'database'
               ? 'bg-white dark:bg-slate-850 text-indigo-650 dark:text-indigo-400 shadow-sm border border-slate-200/40 dark:border-slate-800/50'
               : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
           }`}
         >
-          <Database className="w-4 h-4 text-indigo-500" />
-          Backup & Restore
+          <Database className="w-3.5 h-3.5 text-indigo-500" />
+          <span>Backup & Restore</span>
           {needsBackupAlert && (
             <span className="absolute top-2 right-2 w-2 h-2 bg-amber-500 rounded-full animate-ping" />
           )}
@@ -695,6 +752,61 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <div className="space-y-1">
                     <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Receipt Footer Note</span>
                     <span className="font-bold text-slate-800 dark:text-slate-200">{footer ? `"${footer}"` : 'Not Set'}</span>
+                  </div>
+
+                  <div className="space-y-1 sm:col-span-2 lg:col-span-3 pt-2 border-t border-slate-100 dark:border-slate-800/40 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Barcode Label Shop Name Styling</span>
+                      <span className="font-semibold text-slate-700 dark:text-slate-300">
+                        {activeShopFont.label} · <span className="inline-flex items-center gap-1 font-bold"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: activeShopColor.hex }} />{activeShopColor.label}</span>
+                      </span>
+                    </div>
+                    <span 
+                      className={`text-xs px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-800 uppercase ${activeShopFont.cssClass}`}
+                      style={{ color: activeShopColor.hex, backgroundColor: `${activeShopColor.hex}10` }}
+                    >
+                      {shopName || 'Shop Name'}
+                    </span>
+                  </div>
+
+                  <div className="space-y-1 sm:col-span-2 lg:col-span-3 pt-2 border-t border-slate-100 dark:border-slate-800/40 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Default Bill & Invoice Template (Vyapar-Style)</span>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="font-extrabold text-slate-800 dark:text-slate-200 text-xs">{activeBillFormatConfig.name}</span>
+                        <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full border ${activeBillFormatConfig.tagClass}`}>{activeBillFormatConfig.tag}</span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">{activeBillFormatConfig.description}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsBillFormatModalOpen(true)}
+                      className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/60 dark:text-indigo-300 text-xs font-bold rounded-xl border border-indigo-200/80 dark:border-indigo-800/60 transition-all cursor-pointer shadow-3xs flex items-center gap-1.5"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      Choose Bill Format (6 Presets)
+                    </button>
+                  </div>
+
+                  <div className="space-y-1 sm:col-span-2 lg:col-span-3 pt-2 border-t border-slate-100 dark:border-slate-800/40 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Database Backup & Device Safety</span>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className={`inline-flex items-center gap-1 text-[11px] font-extrabold ${lastBackupTime ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                          {lastBackupTime ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
+                          {lastBackupTime ? `Last backup: ${new Date(lastBackupTime).toLocaleDateString()}` : 'No backup yet - Local only!'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Exports all products, sales, customers, khata, POs & settings as single JSON with native share.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveSection('database')}
+                      className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl border border-slate-200/80 dark:border-slate-700/60 transition-all cursor-pointer shadow-3xs flex items-center gap-1.5"
+                    >
+                      <HardDrive className="w-3.5 h-3.5 text-indigo-500" />
+                      Manage Backup & Restore
+                    </button>
                   </div>
                 </div>
               </div>
@@ -1117,6 +1229,98 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
             </form>
           )}
+          </div>
+
+          {/* BARCODE LABEL BRANDING & TYPOGRAPHY CARD */}
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200/80 dark:border-slate-800/80 shadow-xs space-y-5">
+            <div className="border-b border-slate-100 dark:border-slate-800/50 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 select-none">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-indigo-50 dark:bg-indigo-950/60 rounded-xl text-indigo-600 dark:text-indigo-400">
+                  <Tag className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
+                    Barcode Label Branding & Typography
+                  </h3>
+                  <p className="text-[10px] text-slate-400 dark:text-slate-500 font-semibold">
+                    Customize shop name font style & brand color printed on barcode stickers
+                  </p>
+                </div>
+              </div>
+
+              {/* Live Preview Badge */}
+              <div className="flex items-center gap-2 self-start sm:self-auto">
+                <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">Live Tag Preview:</span>
+                <span 
+                  className={`px-3 py-1 rounded-xl border border-slate-200 dark:border-slate-800 text-xs uppercase tracking-wider ${activeShopFont.cssClass}`}
+                  style={{ color: activeShopColor.hex, backgroundColor: `${activeShopColor.hex}14` }}
+                >
+                  {shopName || 'Shop Name'}
+                </span>
+              </div>
+            </div>
+
+            {/* Typography Selection */}
+            <div className="space-y-2">
+              <label className="block text-[10px] font-extrabold text-slate-400 dark:text-slate-500 uppercase tracking-wider select-none">
+                Shop Name Font Typography
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+                {SHOP_NAME_FONTS.map(font => {
+                  const isSelected = barcodeLabelShopNameFont === font.id;
+                  return (
+                    <button
+                      key={font.id}
+                      type="button"
+                      onClick={() => handleUpdateBarcodeLabelFont(font.id)}
+                      className={`p-3 rounded-2xl text-left transition-all border cursor-pointer ${
+                        isSelected
+                          ? 'bg-indigo-50/80 dark:bg-indigo-950/60 border-indigo-500 text-indigo-700 dark:text-indigo-300 ring-2 ring-indigo-500/20 shadow-xs font-bold'
+                          : 'bg-slate-50/70 dark:bg-slate-950 border-slate-200/80 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="text-[10px] font-medium text-slate-400 dark:text-slate-500">
+                        {font.label}
+                      </div>
+                      <div className={`text-xs sm:text-sm mt-1 truncate ${font.cssClass}`}>
+                        {font.preview}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Brand Color Palette */}
+            <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800/40">
+              <label className="block text-[10px] font-extrabold text-slate-400 dark:text-slate-500 uppercase tracking-wider select-none">
+                Brand Text Color
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {(Object.keys(SHOP_NAME_COLORS) as ShopNameColorKey[]).map(cKey => {
+                  const c = SHOP_NAME_COLORS[cKey];
+                  const isSelected = barcodeLabelShopNameColor === cKey;
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => handleUpdateBarcodeLabelColor(c.id)}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                        isSelected
+                          ? 'bg-white dark:bg-slate-900 border-indigo-500 text-slate-900 dark:text-slate-100 shadow-xs ring-2 ring-indigo-500/30'
+                          : 'bg-slate-50/80 dark:bg-slate-950 border-slate-200/80 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                      }`}
+                    >
+                      <span
+                        className="w-3.5 h-3.5 rounded-full border border-black/10 shadow-xs shrink-0"
+                        style={{ backgroundColor: c.hex }}
+                      />
+                      <span>{c.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -1708,11 +1912,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
               <button
                 type="button"
-                onClick={onExportData}
-                className="flex items-center justify-center gap-2.5 py-4 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black uppercase tracking-wider rounded-2xl transition-all active:scale-98 cursor-pointer shadow-md shadow-indigo-600/20 select-none"
+                disabled={isExportingBackup}
+                onClick={handleExportWithFeedback}
+                className="flex items-center justify-center gap-2.5 py-4 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-xs font-black uppercase tracking-wider rounded-2xl transition-all active:scale-98 cursor-pointer shadow-md shadow-indigo-600/20 select-none"
               >
                 <Upload className="w-4 h-4 stroke-[2.5px]" />
-                Export & Share Backup (JSON)
+                {isExportingBackup ? 'Exporting & Saving Backup...' : 'Export & Share Backup (JSON)'}
               </button>
 
               <label className="flex items-center justify-center gap-2.5 py-4 px-4 border-2 border-emerald-500/40 hover:border-emerald-500 bg-emerald-50/50 hover:bg-emerald-50 dark:bg-emerald-950/30 dark:hover:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 text-xs font-black uppercase tracking-wider rounded-2xl cursor-pointer transition-all active:scale-98 select-none shadow-xs">
@@ -1807,6 +2012,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
             {/* Modal Body */}
             <div className="p-6 overflow-y-auto space-y-5">
+              {/* 6 Bill Formats Selection (Vyapar Style) */}
+              <BillFormatSelector
+                selectedFormat={billFormat}
+                onSelectFormat={setBillFormat}
+              />
+
               {/* Default Thermal Paper Dimension Selector */}
               <div className="p-3.5 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-2">
                 <label className="block text-xs font-black text-slate-800 dark:text-slate-200 uppercase tracking-wider">
@@ -1912,6 +2123,85 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </div>
                 )}
               </div>
+
+              {/* Barcode Label Shop Name Typography & Color */}
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3.5 select-none">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="block text-xs font-extrabold text-slate-700 dark:text-slate-300">
+                      🏷️ Barcode Label Shop Name Styling
+                    </label>
+                    <p className="text-[9px] text-slate-400 dark:text-slate-500 font-semibold leading-normal mt-0.5">
+                      Font typography & brand color for shop name printed on sticker barcode tags.
+                    </p>
+                  </div>
+                  <span 
+                    className={`px-2.5 py-0.5 rounded-lg border border-slate-200 dark:border-slate-800 text-[11px] uppercase tracking-wider ${activeShopFont.cssClass}`}
+                    style={{ color: activeShopColor.hex, backgroundColor: `${activeShopColor.hex}14` }}
+                  >
+                    {shopName || 'Shop Name'}
+                  </span>
+                </div>
+
+                {/* Font Choices */}
+                <div className="space-y-1.5">
+                  <label className="block text-[9.5px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                    Font Typography
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {SHOP_NAME_FONTS.map(font => (
+                      <button
+                        key={font.id}
+                        type="button"
+                        onClick={() => handleUpdateBarcodeLabelFont(font.id)}
+                        className={`p-2 rounded-xl text-left transition-all border cursor-pointer ${
+                          barcodeLabelShopNameFont === font.id
+                            ? 'bg-indigo-50 dark:bg-indigo-950/60 border-indigo-500 text-indigo-600 dark:text-indigo-300 font-bold shadow-xs'
+                            : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="text-[10px] font-medium text-slate-400 dark:text-slate-500 leading-tight">
+                          {font.label}
+                        </div>
+                        <div className={`text-xs truncate leading-tight mt-0.5 ${font.cssClass}`}>
+                          {font.preview}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Color Choices */}
+                <div className="space-y-1.5">
+                  <label className="block text-[9.5px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                    Brand Text Color
+                  </label>
+                  <div className="flex flex-wrap gap-1.5 items-center">
+                    {(Object.keys(SHOP_NAME_COLORS) as ShopNameColorKey[]).map(cKey => {
+                      const c = SHOP_NAME_COLORS[cKey];
+                      const isSelected = barcodeLabelShopNameColor === cKey;
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => handleUpdateBarcodeLabelColor(c.id)}
+                          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-bold transition-all cursor-pointer ${
+                            isSelected
+                              ? 'bg-white dark:bg-slate-900 border-indigo-500 text-slate-900 dark:text-slate-100 shadow-xs ring-1 ring-indigo-500/40'
+                              : 'bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                          }`}
+                        >
+                          <span 
+                            className="w-3 h-3 rounded-full border border-black/10 flex-shrink-0"
+                            style={{ backgroundColor: c.hex }}
+                          />
+                          <span className="text-[10px]">{c.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Modal Footer */}
@@ -1940,6 +2230,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     showFooterOnBill,
                     showTermsOnBill,
                     termsTextOnBill,
+                    barcodeLabelShopNameFont,
+                    barcodeLabelShopNameColor,
+                    billFormat,
                   });
                   setIsBillFormatModalOpen(false);
                 }}

@@ -203,7 +203,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     : sortedAndFilteredProducts;
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3 w-full max-w-full overflow-x-hidden">
       {/* Search and Camera scanning quick anchors */}
       <div className="flex gap-2 relative">
         <div className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2.5 flex items-center gap-2 shadow-xs focus-within:border-indigo-500">
@@ -233,49 +233,16 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         </button>
       </div>
 
-      {/* Standalone Low-stock threshold filter toggle */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between bg-white border border-slate-200 rounded-xl p-3 shadow-xs hover:border-slate-300 transition-colors gap-2">
-        <div className="flex items-center gap-2.5">
-          <input
-            type="checkbox"
-            id="low-stock-toggle"
-            checked={showOnlyLowStock}
-            onChange={(e) => setShowOnlyLowStock(e.target.checked)}
-            className="w-4.5 h-4.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-          />
-          <label htmlFor="low-stock-toggle" className="text-xs font-bold text-slate-700 cursor-pointer select-none flex items-center gap-1.5">
-            <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 animate-bounce" />
-            Show only low stock items
-          </label>
-        </div>
-        <div className="flex items-center gap-2">
-          {onOpenSuppliersPO && (
-            <button
-              type="button"
-              onClick={() => onOpenSuppliersPO('suggestions')}
-              className="text-[11px] bg-gradient-to-r from-amber-600 to-indigo-600 hover:from-amber-700 hover:to-indigo-700 text-white font-black px-2.5 py-1 rounded-lg flex items-center gap-1 cursor-pointer shadow-xs transition-all active:scale-95"
-              title="Generate suggested purchase order for low-stock items"
-            >
-              <Zap className="w-3 h-3 fill-current" />
-              <span>⚡ Suggested Purchase Orders</span>
-            </button>
-          )}
-          <span className="text-[10px] bg-amber-50 text-amber-700 font-extrabold px-2 py-0.5 rounded-full uppercase border border-amber-100">
-            Threshold Alert
-          </span>
-        </div>
-      </div>
-
       {/* Expiry / Low stock categorizations tabs & Bulk Export option */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 bg-slate-50 p-2.5 rounded-2xl border border-slate-200/60 shadow-xs">
-        <div className="flex gap-1 overflow-x-auto pb-1 lg:pb-0 select-none scrollbar-none flex-1">
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2.5 bg-white dark:bg-slate-900 p-2.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs">
+        <div className="flex flex-wrap items-center gap-1.5 pb-1 lg:pb-0 select-none flex-1 min-w-0">
           <button
             type="button"
             onClick={() => setFilterTab('all')}
-            className={`px-3 py-1.5 rounded-full text-xs font-extrabold whitespace-nowrap transition-all duration-150 text-center cursor-pointer ${
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all duration-150 text-center cursor-pointer ${
               filterTab === 'all'
-                ? 'bg-slate-900 text-white shadow-xs'
-                : 'bg-transparent text-slate-600 hover:bg-slate-200/50'
+                ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-xs'
+                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
             All Stock ({products.length})
@@ -284,23 +251,23 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           <button
             type="button"
             onClick={() => setFilterTab('low')}
-            className={`px-3 py-1.5 rounded-full text-xs font-extrabold whitespace-nowrap transition-all duration-150 text-center flex items-center gap-1 cursor-pointer ${
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all duration-150 text-center flex items-center gap-1.5 cursor-pointer ${
               filterTab === 'low'
                 ? 'bg-amber-600 text-white shadow-xs'
-                : 'bg-transparent text-amber-650 hover:bg-amber-100/50'
+                : 'text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40'
             }`}
           >
             <AlertTriangle className="w-3.5 h-3.5" />
-            Low Threshold
+            Low Stock
           </button>
 
           <button
             type="button"
             onClick={() => setFilterTab('exp')}
-            className={`px-3 py-1.5 rounded-full text-xs font-extrabold whitespace-nowrap transition-all duration-150 text-center flex items-center gap-1 cursor-pointer ${
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all duration-150 text-center flex items-center gap-1.5 cursor-pointer ${
               filterTab === 'exp'
                 ? 'bg-rose-600 text-white shadow-xs'
-                : 'bg-transparent text-rose-650 hover:bg-rose-100/50'
+                : 'text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40'
             }`}
           >
             <Calendar className="w-3.5 h-3.5" />
@@ -310,14 +277,38 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           <button
             type="button"
             onClick={() => setFilterTab('xpd')}
-            className={`px-3 py-1.5 rounded-full text-xs font-extrabold whitespace-nowrap transition-all duration-150 text-center flex items-center gap-1 cursor-pointer ${
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all duration-150 text-center flex items-center gap-1.5 cursor-pointer ${
               filterTab === 'xpd'
                 ? 'bg-red-700 text-white shadow-xs'
-                : 'bg-transparent text-red-700 hover:bg-red-150/50'
+                : 'text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40'
             }`}
           >
             Expired
           </button>
+
+          {/* Low stock filter toggle checkbox */}
+          <label className="flex items-center gap-1.5 ml-1 px-2.5 py-1 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              id="low-stock-toggle"
+              checked={showOnlyLowStock}
+              onChange={(e) => setShowOnlyLowStock(e.target.checked)}
+              className="w-3.5 h-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+            />
+            <span>Low stock only</span>
+          </label>
+
+          {onOpenSuppliersPO && (
+            <button
+              type="button"
+              onClick={() => onOpenSuppliersPO('suggestions')}
+              className="text-xs bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 font-bold px-2.5 py-1.5 rounded-xl flex items-center gap-1 cursor-pointer border border-indigo-200 dark:border-indigo-800/80 transition-all ml-auto sm:ml-0"
+              title="Generate suggested purchase order for low-stock items"
+            >
+              <Zap className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+              <span>Suggested POs</span>
+            </button>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5 justify-start lg:justify-end">
@@ -665,22 +656,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 key={p.id}
                 type="button"
                 onClick={() => onOpenProductModal(p.id)}
-                className={`w-full text-left rounded-xl p-3 shadow-xs flex flex-col justify-between transition-all cursor-pointer active:scale-[0.99] border ${
+                className={`w-full text-left rounded-2xl p-3.5 shadow-2xs flex flex-col justify-between transition-all cursor-pointer active:scale-[0.99] border ${
                   isCardSelected
-                    ? 'bg-indigo-50/70 dark:bg-indigo-950/40 border-indigo-300 dark:border-indigo-700 ring-2 ring-indigo-500/30'
-                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-850/50'
-                } ${
-                  isOutOfStock
-                    ? 'border-l-rose-500 border-l-4'
-                    : isLowStock
-                      ? 'border-l-amber-500 border-l-4'
-                      : expiryState === 'expired'
-                        ? 'border-l-red-600 border-l-4'
-                        : expiryState === 'soon'
-                          ? 'border-l-rose-455 border-l-4'
-                          : isCardSelected
-                            ? 'border-l-indigo-600 border-l-4'
-                            : 'border-l-slate-200 dark:border-l-slate-800'
+                    ? 'bg-indigo-50/70 dark:bg-indigo-950/40 border-indigo-400 dark:border-indigo-600 ring-2 ring-indigo-500/20'
+                    : isOutOfStock
+                      ? 'bg-rose-50/30 dark:bg-rose-950/20 border-rose-200/80 dark:border-rose-900/50 hover:border-rose-300 dark:hover:border-rose-800'
+                      : isLowStock
+                        ? 'bg-amber-50/30 dark:bg-amber-950/20 border-amber-200/80 dark:border-amber-900/50 hover:border-amber-300 dark:hover:border-amber-800'
+                        : 'bg-white dark:bg-slate-900 border-slate-200/80 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
                 }`}
               >
                 <div className="flex items-start gap-3 w-full">
